@@ -24,49 +24,52 @@
 
 ## 🚀 快速开始
 
-### 前置要求
+本项目采用 **管理端 (Host)** + **执行端 (Docker)** 的混合架构。管理端直接运行在你的宿主机上，通过桥接方式管理 Docker 容器中的 OpenClaw 实例。
 
-- **操作系统**：macOS / Linux (Ubuntu/Debian/CentOS) / Windows
-- **Docker**：已安装并运行 Docker Engine
-- **端口**：确保 8080 端口可用（Web UI 默认端口）
+### 1. 前置要求
 
-### 安装步骤
+- **操作系统**：macOS / Linux / Windows
+- **Python**: 3.8+ (后端运行)
+- **Node.js**: 18+ (前端构建)
+- **Docker**: 已安装并在宿主机运行 (用于运行 OpenClaw 实例)
 
-#### 1. 克隆项目
+### 2. 部署流程 (从零开始)
 
+#### 第一步：克隆项目
 ```bash
 git clone <项目地址>
-cd Project.OpenOpenClaw
+cd OpenOpenClaw
 ```
 
-#### 2. 安装后端依赖
-
+#### 第二步：部署后端
 ```bash
 cd backend
+# 建议创建虚拟环境
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-#### 3. 构建前端
-
+#### 第三步：构建前端
 ```bash
-cd frontend
+cd ../frontend
 npm install
 npm run build
 ```
+> **提示**：构建完成后，静态文件将生成在 `frontend/dist` 目录，后端会自动识别并托管。
 
-#### 4. 启动服务
-
+#### 第四步：启动管理系统
 ```bash
-# 回到项目根目录
-cd ..
-
-# 启动后端服务
-python -m backend.main
+cd ../backend
+# 可选：设置自定义数据存放路径
+export OPENCLAW_DATA_DIR=./data
+# 运行主程序
+python3 main.py
 ```
 
-#### 5. 访问 Web UI
-
-打开浏览器访问：http://localhost:8080
+### 3. 开始使用
+打开浏览器访问：**http://localhost:8080**
+现在你可以创建群组和 OpenClaw 实例了！
 
 ## 📖 使用指南
 
@@ -78,7 +81,7 @@ python -m backend.main
 2. 点击 **创建群组** 按钮
 3. 填写群组信息：
    - **群组名称**：如 `dev-group`
-   - **根目录**：实例数据存储路径，如 `/data/openclaw/groups/dev-group`
+   - **根目录**：实例数据存储路径，如 `groups/dev-group` (相对于数据目录)
    - **Docker 网络**：如 `openclaw_network_dev`
    - **端口范围**：如 `18980-18990`
 4. 点击 **确定** 创建
@@ -143,7 +146,7 @@ python -m backend.main
 
 1. 点击左侧菜单 **数据迁移**
 2. 在 **导出** 标签页选择要导出的实例
-3. 点击 **导出实例**，下载 ZIP 文件
+3. 点击 **导出实例**，下载 ZIP 文件（存储在数据目录的 `exports/` 下）
 
 导出的内容包括：
 - `openclaw.json` - 主配置文件
@@ -175,7 +178,7 @@ python -m backend.main
 
 - **Docker Socket 路径**：Docker daemon 连接地址
 - **Web UI 端口**：默认 8080
-- **数据存储根目录**：默认 `/data/openclaw`
+- **数据存储根目录**：由环境变量 `OPENCLAW_DATA_DIR` 控制，运行中可查看当前路径
 - **默认 Docker 镜像**：默认 `openclaw/openclaw:latest`
 - **镜像加速器**：可配置阿里云等镜像源
 - **环境检测**：查看系统、Docker 状态信息
@@ -195,7 +198,7 @@ A: 点击实例的 **终端** 按钮，或直接访问 `http://localhost:{端口
 
 ### Q: 实例数据存储在哪里？
 
-A: 在群组根目录下的实例目录中，例如：`/data/openclaw/groups/{群组名}/{实例名}/.openclaw/`
+A: 在数据目录下的实例目录中，例如：`{OPENCLAW_DATA_DIR}/groups/{群组名}/{实例名}/.openclaw/`
 
 ### Q: 如何迁移到新服务器？
 

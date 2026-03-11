@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 300000  // 5 minutes default
 })
 
 api.interceptors.response.use(
@@ -37,14 +37,14 @@ export const instanceApi = {
   getById: (id) => api.get(`/instances/${id}`),
   create: (data) => api.post('/instances', data),
   delete: (id) => api.delete(`/instances/${id}`),
-  start: (id) => api.post(`/instances/${id}/start`),
+  start: (id) => api.post(`/instances/${id}/start`, null, { timeout: 600000 }),
   stop: (id) => api.post(`/instances/${id}/stop`),
   restart: (id) => api.post(`/instances/${id}/restart`),
   getLogs: (id, tail = 100) => api.get(`/instances/${id}/logs`, { params: { tail } }),
   getStats: (id) => api.get(`/instances/${id}/stats`),
   getConfig: (id) => api.get(`/instances/${id}/config`),
   updateConfig: (id, data) => api.put(`/instances/${id}/config`, data),
-  batchStart: (ids) => api.post('/instances/batch/start', ids),
+  batchStart: (ids) => api.post('/instances/batch/start', ids, { timeout: 1800000 }),
   batchStop: (ids) => api.post('/instances/batch/stop', ids),
   batchDelete: (ids) => api.post('/instances/batch/delete', ids),
   startAll: () => api.post('/instances/start-all'),
@@ -72,7 +72,8 @@ export const systemApi = {
   getStats: () => api.get('/system/stats'),
   getSettings: () => api.get('/system/settings'),
   updateSettings: (settings) => api.put('/system/settings', settings),
-  pullImage: (image) => api.post('/system/pull-image', null, { params: { image } }),
+  pullImage: (image) => api.post('/system/pull-image', null, { params: { image }, timeout: 1800000 }),
+  pullImageStreamUrl: (image) => `/api/system/pull-image-stream?image=${encodeURIComponent(image)}`,
   checkEnv: () => api.get('/system/env-check'),
   getNetworks: () => api.get('/system/networks'),
   getImages: () => api.get('/system/images'),

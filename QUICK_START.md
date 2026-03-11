@@ -193,7 +193,8 @@ Project.OpenOpenClaw/
 │   ├── src/             # Vue 源码
 │   ├── package.json     # NPM 依赖
 │   └── vite.config.js   # Vite 配置
-├── Dockerfile           # Docker 部署文件
+├── Dockerfile           # Docker 部署文件 (多阶段构建优化)
+├── .dockerignore        # Docker 忽略文件
 └── README.md           # 项目说明
 ```
 
@@ -238,52 +239,31 @@ npm run build
 
 构建完成后，前端资源会生成在 `dist/` 目录。
 
-### 2.4 配置数据目录
+### 2.4 配置与运行
+
+#### 第一步：设置数据目录
+你可以将数据存储在任何你喜欢的位置（由 `OPENCLAW_DATA_DIR` 控制）。
 
 ```bash
-# 创建数据目录（根据需要修改路径）
-mkdir -p /data/openclaw
+# 设置数据目录（可选，默认为 ./data）
+export OPENCLAW_DATA_DIR=/your/custom/path
+mkdir -p $OPENCLAW_DATA_DIR
 ```
 
-### 2.5 启动服务
-
-#### 方式一：直接运行
+#### 第二步：启动系统
+回到 `backend` 目录并在虚拟环境中启动系统：
 
 ```bash
-# 回到项目根目录
-cd ..
-
-# 启动后端服务
-# 默认端口 8080
-python -m backend.main
+cd backend
+python3 main.py
 ```
 
-#### 方式二：使用 uvicorn
+系统启动后，它会自动识别并托管你在 `frontend/dist` 构建好的静态文件。
 
-```bash
-# 安装 uvicorn（如未安装）
-pip install uvicorn
-
-# 启动服务
-uvicorn backend.main:app --host 0.0.0.0 --port 8080 --reload
-```
-
-#### 方式三：使用 Docker 运行（推荐）
-
-项目已提供 Dockerfile，可一键部署：
-
-```bash
-# 构建镜像
-docker build -t openclaw-manager:latest .
-
-# 运行容器
-docker run -d \
-  --name openclaw-manager \
-  -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /data/openclaw:/data/openclaw \
-  openclaw-manager:latest
-```
+### 2.5 验证与访问
+打开浏览器访问：`http://localhost:8080`
+- **预期输出**：你会看到一个精美的登录页面或仪表盘。
+- **验证链接**：访问 `http://localhost:8080/api/system/stats` 确认 API 响应正常。
 
 ### 2.6 验证服务
 
@@ -317,7 +297,7 @@ curl http://localhost:8080/
 | 字段 | 示例值 | 说明 |
 |------|--------|------|
 | 群组名称 | `dev-team` | 便于识别的名称 |
-| 根目录 | `/data/openclaw/groups/dev-team` | 实例数据存储路径 |
+| 根目录 | `groups/dev-team` | 实例数据存储路径 (相对于数据目录) |
 | Docker 网络 | `openclaw_network_dev` | 容器网络名称 |
 | 端口范围起始 | `18980` | 可用端口起始值 |
 | 端口范围结束 | `18990` | 可用端口结束值 |
@@ -499,7 +479,7 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 **功能**：
 - Docker Socket 路径配置
 - Web UI 端口配置
-- 数据存储目录配置
+- 数据存储目录配置：显示当前 `OPENCLAW_DATA_DIR` 的绝对路径
 - Docker 镜像选择与预拉取
 - 镜像加速器配置
 - 环境信息查看
@@ -512,7 +492,7 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### 5.1 数据目录结构
 
 ```
-{data_root}/
+{OPENCLAW_DATA_DIR}/
 ├── groups/
 │   └── {group_name}/
 │       ├── {instance_1}/
@@ -526,12 +506,11 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 │       │   └── data/            # 业务数据
 │       └── {instance_2}/
 │           └── ...
-├── data/                        # 系统数据
-│   ├── openclaw.db             # SQLite 数据库
-│   ├── settings.json            # 系统设置
-│   ├── templates.json           # 配置模板
-│   ├── exports/                 # 导出文件
-│   └── uploads/                 # 上传文件
+├── openclaw.db             # SQLite 数据库
+├── settings.json            # 系统设置
+├── templates.json           # 配置模板
+├── exports/                 # 导出文件
+└── uploads/                 # 上传文件
 ```
 
 ### 5.2 端口分配

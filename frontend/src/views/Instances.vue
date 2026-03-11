@@ -147,6 +147,8 @@
         <el-button type="primary" @click="confirmClone">确定克隆</el-button>
       </template>
     </el-dialog>
+
+    <OperationLog ref="operationLog" />
   </div>
 </template>
 
@@ -155,9 +157,11 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { groupApi, instanceApi } from '../api'
+import OperationLog from '../components/OperationLog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const operationLog = ref(null)
 
 const groups = ref([])
 const instances = ref([])
@@ -222,19 +226,26 @@ const submitForm = async () => {
   const valid = await formRef.value?.validate()
   if (!valid) return
   
+  dialogVisible.value = false
   try {
-    await instanceApi.create(form.value)
+    const result = await operationLog.value.execute(`创建实例: ${form.value.name}`, async (addLog) => {
+      addLog(`目标群组: ${form.value.group_id}`, 'info')
+      addLog(`实例名称: ${form.value.name}`, 'info')
+      return await instanceApi.create(form.value)
+    })
     ElMessage.success('实例创建成功')
-    dialogVisible.value = false
     loadInstances()
   } catch (error) {
-    ElMessage.error(error)
+    ElMessage.error(typeof error === 'string' ? error : '创建失败')
   }
 }
 
 const restartInstance = async (id) => {
   try {
-    await instanceApi.restart(id)
+    await operationLog.value.execute('重启实例', async (addLog) => {
+      addLog(`实例 ID: ${id}`, 'info')
+      return await instanceApi.restart(id)
+    })
     ElMessage.success('实例已重启')
     loadInstances()
   } catch (error) {
@@ -327,7 +338,10 @@ const refreshLogs = async () => {
 
 const startInstance = async (id) => {
   try {
-    await instanceApi.start(id)
+    await operationLog.value.execute('启动实例', async (addLog) => {
+      addLog(`实例 ID: ${id}`, 'info')
+      return await instanceApi.start(id)
+    })
     ElMessage.success('实例已启动')
     loadInstances()
   } catch (error) {
@@ -337,7 +351,10 @@ const startInstance = async (id) => {
 
 const stopInstance = async (id) => {
   try {
-    await instanceApi.stop(id)
+    await operationLog.value.execute('停止实例', async (addLog) => {
+      addLog(`实例 ID: ${id}`, 'info')
+      return await instanceApi.stop(id)
+    })
     ElMessage.success('实例已停止')
     loadInstances()
   } catch (error) {
@@ -352,7 +369,10 @@ const confirmDelete = (row) => {
     { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
   ).then(async () => {
     try {
-      await instanceApi.delete(row.id)
+      await operationLog.value.execute(`删除实例: ${row.name}`, async (addLog) => {
+        addLog(`容器名: ${row.container_name}`, 'info')
+        return await instanceApi.delete(row.id)
+      })
       ElMessage.success('实例删除成功')
       loadInstances()
     } catch (error) {
@@ -367,7 +387,10 @@ const handleSelectionChange = (selection) => {
 
 const batchStart = async () => {
   try {
-    await instanceApi.batchStart(selectedIds.value)
+    await operationLog.value.execute(`批量启动 ${selectedIds.value.length} 个实例`, async (addLog) => {
+      addLog(`待启动实例数: ${selectedIds.value.length}`, 'info')
+      return await instanceApi.batchStart(selectedIds.value)
+    })
     ElMessage.success('批量启动完成')
     loadInstances()
   } catch (error) {
@@ -377,7 +400,10 @@ const batchStart = async () => {
 
 const batchStop = async () => {
   try {
-    await instanceApi.batchStop(selectedIds.value)
+    await operationLog.value.execute(`批量停止 ${selectedIds.value.length} 个实例`, async (addLog) => {
+      addLog(`待停止实例数: ${selectedIds.value.length}`, 'info')
+      return await instanceApi.batchStop(selectedIds.value)
+    })
     ElMessage.success('批量停止完成')
     loadInstances()
   } catch (error) {

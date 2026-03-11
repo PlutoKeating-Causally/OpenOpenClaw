@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
@@ -14,8 +14,27 @@ from pathlib import Path
 from models import Group, Instance, SessionLocal, init_db, engine, Base
 from docker_manager import DockerManager
 from config_manager import ConfigManager
+import contextlib
 
-app = FastAPI(title="OpenClaw Manager API", version="1.0.0")
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    init_db()
+    data_dir = os.getenv("OPENCLAW_DATA_DIR", "./data")
+    os.makedirs(data_dir, exist_ok=True)
+    
+    static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+    if os.path.exists(static_dir):
+        app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+        # Also mount other static files if they exist (favicons, etc.)
+        for item in os.listdir(static_dir):
+            if item != "assets" and item != "index.html" and os.path.isfile(os.path.join(static_dir, item)):
+                app.mount(f"/{item}", StaticFiles(directory=static_dir, html=False), name=item)
+    
+    yield
+    # Shutdown logic (if any)
+
+app = FastAPI(title="OpenClaw Manager API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,6 +53,41 @@ def get_db():
 
 docker_mgr = DockerManager()
 config_mgr = ConfigManager()
+
+def get_effective_image(image: str = None) -> str:
+    """Resolve the Docker image name using the configured mirror registry.
+    
+    If a docker_mirror is configured in settings, it will be used as the
+    registry prefix for the image. For example:
+      mirror = 'https://docker.m.daocloud.io'
+      image  = 'openclaw/openclaw:latest'
+      result = 'docker.m.daocloud.io/openclaw/openclaw:latest'
+    """
+    settings = config_mgr.get_settings()
+    default_image = settings.get("default_image", "openclaw/openclaw:latest")
+    img = image or default_image
+    
+    # Get the configured mirror URL
+    mirror = settings.get("docker_mirror", "") or settings.get("docker_registry", "")
+    if not mirror:
+        return img
+    
+    # Strip protocol prefix (https://, http://)
+    mirror_host = mirror.replace("https://", "").replace("http://", "").rstrip("/")
+    
+    # Don't double-prefix if the image already starts with the mirror host
+    if img.startswith(mirror_host):
+        return img
+    
+    # Don't apply mirror to images that already have a custom registry prefix
+    # (e.g., ghcr.io/xxx, registry.example.com/xxx)
+    # Only apply to Docker Hub images (no dot in the first segment or library images)
+    first_segment = img.split("/")[0]
+    if "." in first_segment or ":" in first_segment:
+        return img  # Already has a registry prefix
+    
+    return f"{mirror_host}/{img}"
+
 
 class GroupCreate(BaseModel):
     name: str
@@ -57,25 +111,13 @@ class ConfigUpdate(BaseModel):
     env_vars: Optional[dict] = None
     openclaw_json: Optional[dict] = None
 
-@app.on_event("startup")
-def startup():
-    init_db()
-    os.makedirs("./data", exist_ok=True)
-    
-    static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
-    if os.path.exists(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/")
 def root():
-    return {"message": "OpenClaw Manager API", "version": "1.0.0"}
-
-@app.get("/app")
-def spa_index():
     static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist", "index.html")
     if os.path.exists(static_dir):
         return FileResponse(static_dir)
-    return {"message": "Frontend not built. Run 'npm run build' in frontend directory."}
+    return {"message": "OpenClaw Manager API", "version": "1.0.0", "note": "Frontend not built. Run 'npm run build' in frontend directory."}
 
 @app.get("/api/groups")
 def get_groups(db: Session = Depends(get_db)):
@@ -239,13 +281,18 @@ def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_instance)
     
+    steps = []
+    steps.append({"message": f"数据库记录已创建: {instance.name} (端口 {assigned_port})", "type": "output"})
+    
     instance_dir = os.path.join(group.root_dir, instance.name)
     os.makedirs(os.path.join(instance_dir, ".openclaw"), exist_ok=True)
     os.makedirs(os.path.join(instance_dir, "data"), exist_ok=True)
+    steps.append({"message": f"实例目录已创建: {instance_dir}", "type": "output"})
     
     config_mgr.create_default_config(instance_dir)
+    steps.append({"message": "默认配置文件已生成", "type": "output"})
     
-    return {"id": db_instance.id, "name": db_instance.name, "host_port": assigned_port, "message": "Instance created successfully"}
+    return {"id": db_instance.id, "name": db_instance.name, "host_port": assigned_port, "message": "Instance created successfully", "steps": steps}
 
 @app.get("/api/instances/{instance_id}")
 def get_instance(instance_id: str, db: Session = Depends(get_db)):
@@ -284,6 +331,11 @@ def start_instance(instance_id: str, db: Session = Depends(get_db)):
     env_file_path = os.path.join(openclaw_dir, ".env")
     environment = docker_mgr.load_env_file(env_file_path)
     
+    steps = []
+    effective_image = get_effective_image()
+    steps.append({"message": f"加载环境变量: {env_file_path}", "type": "output"})
+    steps.append({"message": f"使用镜像: {effective_image}", "type": "output"})
+    steps.append({"message": f"docker run --name {inst.container_name} --network {group.docker_network} -p {inst.host_port}:18987 ...", "type": "output"})
     try:
         docker_mgr.run_container(
             name=inst.container_name,
@@ -293,14 +345,16 @@ def start_instance(instance_id: str, db: Session = Depends(get_db)):
                 os.path.join(group.root_dir, inst.name, ".openclaw"): {"bind": "/root/.openclaw", "mode": "rw"},
                 os.path.join(group.root_dir, inst.name, "data"): {"bind": "/root/data", "mode": "rw"}
             },
-            environment=environment
+            environment=environment,
+            image=effective_image
         )
         inst.status = "running"
         db.commit()
+        steps.append({"message": f"容器 {inst.container_name} 启动成功", "type": "output"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start instance: {str(e)}")
     
-    return {"message": "Instance started successfully"}
+    return {"message": "Instance started successfully", "steps": steps}
 
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str, db: Session = Depends(get_db)):
@@ -308,14 +362,16 @@ def stop_instance(instance_id: str, db: Session = Depends(get_db)):
     if not inst:
         raise HTTPException(status_code=404, detail="Instance not found")
     
+    steps = [{"message": f"docker stop {inst.container_name}", "type": "output"}]
     try:
         docker_mgr.stop_container(inst.container_name)
         inst.status = "stopped"
         db.commit()
+        steps.append({"message": f"容器 {inst.container_name} 已停止", "type": "output"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to stop instance: {str(e)}")
     
-    return {"message": "Instance stopped successfully"}
+    return {"message": "Instance stopped successfully", "steps": steps}
 
 @app.post("/api/instances/{instance_id}/restart")
 def restart_instance(instance_id: str, db: Session = Depends(get_db)):
@@ -323,12 +379,14 @@ def restart_instance(instance_id: str, db: Session = Depends(get_db)):
     if not inst:
         raise HTTPException(status_code=404, detail="Instance not found")
     
+    steps = [{"message": f"docker restart {inst.container_name}", "type": "output"}]
     try:
         docker_mgr.restart_container(inst.container_name)
+        steps.append({"message": f"容器 {inst.container_name} 已重启", "type": "output"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restart instance: {str(e)}")
     
-    return {"message": "Instance restarted successfully"}
+    return {"message": "Instance restarted successfully", "steps": steps}
 
 @app.delete("/api/instances/{instance_id}")
 def delete_instance(instance_id: str, db: Session = Depends(get_db)):
@@ -338,20 +396,26 @@ def delete_instance(instance_id: str, db: Session = Depends(get_db)):
     
     group = db.query(Group).filter(Group.id == inst.group_id).first()
     
+    steps = []
     try:
+        steps.append({"message": f"docker stop {inst.container_name}", "type": "output"})
         docker_mgr.stop_container(inst.container_name)
+        steps.append({"message": f"docker rm {inst.container_name}", "type": "output"})
         docker_mgr.remove_container(inst.container_name)
+        steps.append({"message": "容器已移除", "type": "output"})
     except:
-        pass
+        steps.append({"message": "容器不存在或已被移除", "type": "output"})
     
     instance_dir = os.path.join(group.root_dir, inst.name)
     if os.path.exists(instance_dir):
         import shutil
         shutil.rmtree(instance_dir)
+        steps.append({"message": f"实例目录已清理: {instance_dir}", "type": "output"})
     
     db.delete(inst)
     db.commit()
-    return {"message": "Instance deleted successfully"}
+    steps.append({"message": "数据库记录已删除", "type": "output"})
+    return {"message": "Instance deleted successfully", "steps": steps}
 
 @app.get("/api/instances/{instance_id}/stats")
 def get_instance_stats(instance_id: str, db: Session = Depends(get_db)):
@@ -691,7 +755,7 @@ def import_group_upload(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    upload_dir = "./data/uploads"
+    upload_dir = os.path.join(config_mgr.data_dir, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     
     file_path = os.path.join(upload_dir, file.filename)
@@ -746,7 +810,7 @@ async def upload_instance_file(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
-    upload_dir = "./data/uploads"
+    upload_dir = os.path.join(config_mgr.data_dir, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     
     file_path = os.path.join(upload_dir, file.filename)
@@ -787,7 +851,7 @@ async def upload_group_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    upload_dir = "./data/uploads"
+    upload_dir = os.path.join(config_mgr.data_dir, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     
     file_path = os.path.join(upload_dir, file.filename)
@@ -827,14 +891,42 @@ def download_file(path: str):
 
 @app.post("/api/system/pull-image")
 def pull_image(image: str = "openclaw/openclaw:latest"):
+    effective_image = get_effective_image(image)
     try:
-        success = docker_mgr.pull_image(image)
+        success = docker_mgr.pull_image(effective_image)
         if success:
-            return {"message": "Image pulled successfully", "image": image}
+            return {"message": "Image pulled successfully", "image": effective_image,
+                    "steps": [{"message": f"docker pull {effective_image}", "type": "output"},
+                              {"message": "镜像拉取成功", "type": "output"}]}
         else:
             raise HTTPException(status_code=500, detail="Failed to pull image")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to pull image: {str(e)}")
+
+@app.get("/api/system/pull-image-stream")
+def pull_image_stream(image: str = "openclaw/openclaw:latest"):
+    """SSE endpoint that streams real-time docker pull progress."""
+    effective_image = get_effective_image(image)
+    
+    def event_generator():
+        has_error = False
+        for line in docker_mgr.pull_image_stream(effective_image):
+            if line.startswith("ERROR:"):
+                has_error = True
+                yield f"data: {json.dumps({'type': 'error', 'message': line})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'output', 'message': line})}\n\n"
+        
+        if has_error:
+            yield f"data: {json.dumps({'type': 'done', 'success': False})}\n\n"
+        else:
+            yield f"data: {json.dumps({'type': 'done', 'success': True})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
+    })
 
 @app.get("/api/system/env-check")
 def check_environment():
@@ -920,3 +1012,26 @@ def stop_all_instances(db: Session = Depends(get_db)):
     
     success_count = sum(1 for r in results if r.get("status") == "success")
     return {"message": f"停止完成: {success_count}/{len(results)}", "results": results}
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if full_path.startswith("api"):
+        raise HTTPException(status_code=404, detail="API route not found")
+        
+    static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+    index_path = os.path.join(static_dir, "index.html")
+    
+    # Check if the path is an actual file in dist (like favicon.ico)
+    file_path = os.path.join(static_dir, full_path)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+        
+    # Otherwise, fall back to index.html for SPA routing
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    
+    raise HTTPException(status_code=404, detail="File not found")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)

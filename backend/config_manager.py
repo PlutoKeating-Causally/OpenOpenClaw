@@ -7,18 +7,19 @@ from typing import Dict, Optional
 
 class ConfigManager:
     def __init__(self):
-        self.settings_file = "./data/settings.json"
-        self.templates_file = "./data/templates.json"
+        self.data_dir = os.getenv("OPENCLAW_DATA_DIR", "./data")
+        self.settings_file = os.path.join(self.data_dir, "settings.json")
+        self.templates_file = os.path.join(self.data_dir, "templates.json")
         self._init_default_settings()
         self._init_default_templates()
     
     def _init_default_settings(self):
-        os.makedirs("./data", exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
         if not os.path.exists(self.settings_file):
             default_settings = {
                 "docker_socket": "/var/run/docker.sock",
                 "web_port": 8080,
-                "data_root": "/data/openclaw",
+                "data_root": self.data_dir,
                 "default_image": "openclaw/openclaw:latest"
             }
             with open(self.settings_file, "w") as f:
@@ -125,13 +126,21 @@ class ConfigManager:
                 json.dump(templates, f, indent=2)
     
     def get_settings(self) -> dict:
+        settings = {}
         if os.path.exists(self.settings_file):
             with open(self.settings_file, "r") as f:
-                return json.load(f)
-        return {}
+                settings = json.load(f)
+        
+        # Ensure we always return the effective data_root from environment if not in settings
+        if "data_root" not in settings or settings["data_root"] == "/data/openclaw":
+            settings["data_root"] = self.data_dir
+            
+        # Add effective env info for UI display
+        settings["effective_data_dir"] = self.data_dir
+        return settings
     
     def update_settings(self, settings: dict):
-        os.makedirs("./data", exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
         with open(self.settings_file, "w") as f:
             json.dump(settings, f, indent=2)
     
@@ -142,7 +151,7 @@ class ConfigManager:
         return {}
     
     def save_templates(self, templates: dict):
-        os.makedirs("./data", exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
         with open(self.templates_file, "w") as f:
             json.dump(templates, f, indent=2)
     
@@ -327,7 +336,8 @@ class ConfigManager:
     
     def export_instance(self, instance_id: str, instance_name: str, group_root_dir: str) -> str:
         instance_dir = os.path.join(group_root_dir, instance_name)
-        export_dir = os.path.join("./data/exports", instance_name)
+        export_root = os.path.join(self.data_dir, "exports")
+        export_dir = os.path.join(export_root, instance_name)
         
         os.makedirs(export_dir, exist_ok=True)
         
@@ -356,7 +366,7 @@ class ConfigManager:
             agents_dst = os.path.join(soul_dir, "agents")
             shutil.copytree(agents_src, agents_dst, dirs_exist_ok=True)
         
-        zip_path = os.path.join("./data/exports", f"{instance_name}.zip")
+        zip_path = os.path.join(export_root, f"{instance_name}.zip")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for root, dirs, files in os.walk(export_dir):
                 for file in files:
@@ -369,7 +379,7 @@ class ConfigManager:
         return zip_path
     
     def import_instance(self, source_path: str, group_id: str, name: str, group_root_dir: str) -> dict:
-        extract_dir = os.path.join("./data/temp", f"import_{name}")
+        extract_dir = os.path.join(self.data_dir, "temp", f"import_{name}")
         instance_dir = os.path.join(group_root_dir, name)
         
         os.makedirs(extract_dir, exist_ok=True)
@@ -402,7 +412,8 @@ class ConfigManager:
         return {"instance_name": name, "instance_dir": instance_dir, "message": "Instance imported successfully"}
     
     def export_group(self, group) -> str:
-        export_dir = os.path.join("./data/exports", f"group_{group.name}")
+        export_root = os.path.join(self.data_dir, "exports")
+        export_dir = os.path.join(export_root, f"group_{group.name}")
         
         os.makedirs(export_dir, exist_ok=True)
         
@@ -425,7 +436,7 @@ class ConfigManager:
                     dst = os.path.join(export_dir, item)
                     shutil.copytree(item_path, dst, dirs_exist_ok=True)
         
-        zip_path = os.path.join("./data/exports", f"group_{group.name}.zip")
+        zip_path = os.path.join(export_root, f"group_{group.name}.zip")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for root, dirs, files in os.walk(export_dir):
                 for file in files:
@@ -438,7 +449,7 @@ class ConfigManager:
         return zip_path
     
     def import_group(self, file_path: str) -> dict:
-        extract_dir = os.path.join("./data/temp", "import_group")
+        extract_dir = os.path.join(self.data_dir, "temp", "import_group")
         
         os.makedirs(extract_dir, exist_ok=True)
         

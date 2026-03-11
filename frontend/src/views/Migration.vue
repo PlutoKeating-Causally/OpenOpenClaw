@@ -165,6 +165,8 @@
         导出实例时，将导出完整的"灵魂文件"，包括配置、记忆、技能等全部数据。
       </el-alert>
     </el-card>
+
+    <OperationLog ref="operationLog" />
   </div>
 </template>
 
@@ -172,6 +174,9 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { groupApi, instanceApi } from '../api'
+import OperationLog from '../components/OperationLog.vue'
+
+const operationLog = ref(null)
 
 const exportTab = ref('instance')
 const importTab = ref('file')
@@ -212,7 +217,11 @@ const loadInstances = async () => {
 
 const exportInstance = async () => {
   try {
-    const result = await instanceApi.export(exportInstanceId.value)
+    const result = await operationLog.value.execute('导出实例', async (addLog) => {
+      addLog(`实例 ID: ${exportInstanceId.value}`, 'info')
+      addLog('正在打包导出数据...', 'info')
+      return await instanceApi.export(exportInstanceId.value)
+    })
     ElMessage.success('实例导出成功')
     const downloadPath = result.export_path
     const fileName = downloadPath.split(/[/\\]/).pop()
@@ -257,7 +266,12 @@ const uploadInstance = async () => {
   }
   uploading.value = true
   try {
-    await instanceApi.upload(importGroupId.value, importInstanceName.value, selectedFile.value)
+    await operationLog.value.execute(`上传并导入实例: ${importInstanceName.value}`, async (addLog) => {
+      addLog(`目标群组: ${importGroupId.value}`, 'info')
+      addLog(`实例名称: ${importInstanceName.value}`, 'info')
+      addLog('正在上传文件...', 'info')
+      return await instanceApi.upload(importGroupId.value, importInstanceName.value, selectedFile.value)
+    })
     ElMessage.success('实例上传导入成功')
     selectedFile.value = null
     importGroupId.value = ''

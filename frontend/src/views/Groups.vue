@@ -37,7 +37,10 @@
           <el-input v-model="form.name" placeholder="请输入群组名称" />
         </el-form-item>
         <el-form-item label="根目录" prop="root_dir">
-          <el-input v-model="form.root_dir" placeholder="/data/openclaw/groups/xxx" />
+          <el-input v-model="form.root_dir" placeholder="groups/xxx">
+            <template #prepend v-if="effectiveDataRoot">{{ effectiveDataRoot }}/</template>
+          </el-input>
+          <div class="form-tip">数据物理路径：{{ effectiveDataRoot }}/{{ form.root_dir }}</div>
         </el-form-item>
         <el-form-item label="Docker网络" prop="docker_network">
           <el-input v-model="form.docker_network" placeholder="openclaw_network_xxx" />
@@ -86,22 +89,27 @@
         <el-table-column prop="created_at" label="创建时间" />
       </el-table>
     </el-drawer>
+
+    <OperationLog ref="operationLog" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { groupApi } from '../api'
+import { groupApi, systemApi } from '../api'
+import OperationLog from '../components/OperationLog.vue'
 
 const router = useRouter()
+const operationLog = ref(null)
 
 const groups = ref([])
 const dialogVisible = ref(false)
 const drawerVisible = ref(false)
 const formRef = ref(null)
 const selectedGroup = ref(null)
+const effectiveDataRoot = ref('')
 
 const form = ref({
   name: '',
@@ -131,7 +139,7 @@ const loadGroups = async () => {
 const showCreateDialog = () => {
   form.value = {
     name: '',
-    root_dir: '/data/openclaw/groups/',
+    root_dir: 'groups/',
     docker_network: 'openclaw_network_',
     port_range_start: 18980,
     port_range_end: 18990,
@@ -140,8 +148,23 @@ const showCreateDialog = () => {
   dialogVisible.value = true
 }
 
+// Watch name to auto-fill relative root_dir
+watch(() => form.value.name, (newName) => {
+  if (!form.value.id && newName) {
+    // Only auto-fill if the user hasn't modified the default 'groups/' part too much
+    if (form.value.root_dir === 'groups/' || form.value.root_dir.startsWith('groups/')) {
+      form.value.root_dir = `groups/${newName}`
+    }
+  }
+})
+
 const editGroup = (row) => {
-  form.value = { ...row }
+  const displayForm = { ...row }
+  // Strip effectiveDataRoot prefix for display
+  if (effectiveDataRoot.value && displayForm.root_dir.startsWith(effectiveDataRoot.value)) {
+    displayForm.root_dir = displayForm.root_dir.substring(effectiveDataRoot.value.length).replace(/^[\\/]+/, '')
+  }
+  form.value = displayForm
   dialogVisible.value = true
 }
 
@@ -159,7 +182,19 @@ const submitForm = async () => {
       })
       ElMessage.success('群组更新成功')
     } else {
-      await groupApi.create(form.value)
+      dialogVisible.value = false
+      // Prepend effectiveDataRoot for creation
+      const submissionData = { ...form.value }
+      if (effectiveDataRoot.value && !submissionData.root_dir.startsWith('/')) {
+        const root = effectiveDataRoot.value.endsWith('/') ? effectiveDataRoot.value : effectiveDataRoot.value + '/'
+        submissionData.root_dir = root + submissionData.root_dir
+      }
+      await operationLog.value.execute(`创建群组: ${form.value.name}`, async (addLog) => {
+        addLog(`群组名称: ${form.value.name}`, 'info')
+        addLog(`根目录: ${submissionData.root_dir}`, 'info')
+        addLog(`Docker 网络: ${form.value.docker_network}`, 'info')
+        return await groupApi.create(submissionData)
+      })
       ElMessage.success('群组创建成功')
     }
     dialogVisible.value = false
@@ -180,7 +215,11 @@ const confirmDelete = (row) => {
     }
   ).then(async () => {
     try {
-      await groupApi.delete(row.id)
+      await operationLog.value.execute(`删除群组: ${row.name}`, async (addLog) => {
+        addLog(`群组 ID: ${row.id}`, 'info')
+        addLog(`Docker 网络: ${row.docker_network}`, 'info')
+        return await groupApi.delete(row.id)
+      })
       ElMessage.success('群组删除成功')
       loadGroups()
     } catch (error) {
@@ -213,8 +252,14 @@ const editGroupConfig = () => {
   router.push({ path: '/config', query: { type: 'group', id: selectedGroup.value.id } })
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadGroups()
+  try {
+    const settings = await systemApi.getSettings()
+    effectiveDataRoot.value = settings.effective_data_dir || settings.data_root || '/data/openclaw'
+  } catch (error) {
+    console.error('获取设置失败', error)
+  }
 })
 </script>
 

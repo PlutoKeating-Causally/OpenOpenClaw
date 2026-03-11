@@ -24,8 +24,13 @@
             </el-form-item>
             
             <el-form-item label="数据存储根目录">
-              <el-input v-model="settings.data_root" placeholder="/data/openclaw" />
-              <div class="form-tip">所有群组和实例数据将存储在此目录下</div>
+              <el-input v-model="settings.data_root" :placeholder="settings.effective_data_dir || '/data/openclaw'" />
+              <div class="form-tip">所有群组和实例数据将存储在此目录下。若设置了 OPENCLAW_DATA_DIR 环境变，将优先使用环境变量。</div>
+            </el-form-item>
+            
+            <el-form-item label="当前生效路径" v-if="settings.effective_data_dir">
+              <el-tag type="info">{{ settings.effective_data_dir }}</el-tag>
+              <div class="form-tip">这是系统当前实际读写数据的根路径</div>
             </el-form-item>
             
             <el-form-item label="默认 Docker 镜像">
@@ -69,10 +74,12 @@
             <el-form-item label="镜像加速器">
               <el-select v-model="dockerRegistry.registry" placeholder="选择镜像源" style="width: 100%;" @change="onRegistryChange">
                 <el-option label="官方 Docker Hub" value="" />
-                <el-option label="阿里云容器镜像服务" value="registry.cn-hangzhou.aliyuncs.com" />
-                <el-option label="Docker Proxy (GHCR)" value="ghcr.io" />
-                <el-option label="Google Container Registry" value="gcr.io" />
-                <el-option label="Quay.io" value="quay.io" />
+                <el-option label="中科大 (USTC)" value="https://docker.mirrors.ustc.edu.cn" />
+                <el-option label="DaoCloud" value="https://docker.m.daocloud.io" />
+                <el-option label="1Panel 官方源" value="https://docker.1panel.live" />
+                <el-option label="Rat.dev" value="https://hub.rat.dev" />
+                <el-option label="轩辕镜像 (Xuanyuan)" value="https://docker.xuanyuan.me" />
+                <el-option label="GHCR.io 镜像 (南京大学)" value="https://ghcr.nju.edu.cn" />
                 <el-option label="自定义" value="custom" />
               </el-select>
             </el-form-item>
@@ -220,6 +227,7 @@
         </el-card>
       </el-col>
     </el-row>
+    <OperationLog ref="operationLog" />
   </div>
 </template>
 
@@ -227,12 +235,16 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { systemApi } from '../api'
+import OperationLog from '../components/OperationLog.vue'
+
+const operationLog = ref(null)
 
 const settings = ref({
   docker_socket: '/var/run/docker.sock',
   web_port: 8080,
-  data_root: '/data/openclaw',
-  default_image: 'openclaw/openclaw:latest'
+  data_root: '',
+  default_image: 'openclaw/openclaw:latest',
+  effective_data_dir: ''
 })
 
 const dockerInfo = ref(null)
@@ -263,6 +275,26 @@ const loadSettings = async () => {
   try {
     const res = await systemApi.getSettings()
     settings.value = { ...settings.value, ...res }
+    // Restore saved docker registry config
+    if (res.docker_registry) {
+      const knownPresets = [
+        'https://docker.mirrors.ustc.edu.cn',
+        'https://docker.m.daocloud.io',
+        'https://docker.1panel.live',
+        'https://hub.rat.dev',
+        'https://docker.xuanyuan.me',
+        'https://ghcr.nju.edu.cn'
+      ]
+      if (knownPresets.includes(res.docker_registry)) {
+        dockerRegistry.value.registry = res.docker_registry
+      } else {
+        dockerRegistry.value.registry = 'custom'
+        dockerRegistry.value.customRegistry = res.docker_registry
+      }
+    }
+    if (res.docker_mirror) {
+      dockerRegistry.value.mirrorUrl = res.docker_mirror
+    }
   } catch (error) {
     ElMessage.error('获取设置失败')
   }
@@ -296,14 +328,15 @@ const pullImage = async () => {
   pulling.value = true
   pullResult.value = ''
   try {
-    await systemApi.pullImage(pullImageName.value)
+    const sseUrl = systemApi.pullImageStreamUrl(pullImageName.value)
+    await operationLog.value.executeStream(`拉取镜像: ${pullImageName.value}`, sseUrl)
     pullSuccess.value = true
     pullResult.value = '镜像拉取成功: ' + pullImageName.value
     ElMessage.success('镜像拉取成功')
   } catch (error) {
     pullSuccess.value = false
-    pullResult.value = '镜像拉取失败: ' + error
-    ElMessage.error('镜像拉取失败: ' + error)
+    pullResult.value = '镜像拉取失败: ' + (error?.message || error)
+    ElMessage.error('镜像拉取失败')
   } finally {
     pulling.value = false
   }
@@ -336,14 +369,13 @@ const saveDockerRegistry = async () => {
 }
 
 const onRegistryChange = () => {
-  const presets = {
-    'registry.cn-hangzhou.ali': 'https://registry.cnyuncs.com-hangzhou.aliyuncs.com',
-    'ghcr.io': '',
-    'gcr.io': '',
-    'quay.io': ''
-  }
-  if (dockerRegistry.value.registry && presets[dockerRegistry.value.registry] !== undefined) {
-    dockerRegistry.value.mirrorUrl = presets[dockerRegistry.value.registry]
+  if (dockerRegistry.value.registry === 'custom') {
+    // Reset or keep current for custom
+  } else if (!dockerRegistry.value.registry) {
+    dockerRegistry.value.mirrorUrl = ''
+  } else {
+    // If it's one of our presets (which are now URLs themselves in the value)
+    dockerRegistry.value.mirrorUrl = dockerRegistry.value.registry
   }
 }
 

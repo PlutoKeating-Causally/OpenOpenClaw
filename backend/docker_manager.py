@@ -226,6 +226,44 @@ class DockerManager:
         except:
             return False
     
+    def pull_image_stream(self, image: str = "openclaw/openclaw:latest"):
+        """Pull an image and yield real-time progress lines as strings."""
+        if self.client is None:
+            yield "ERROR: Docker client not initialized"
+            return
+
+        try:
+            # Parse image into repository and tag
+            if ":" in image:
+                repo, tag = image.rsplit(":", 1)
+            else:
+                repo, tag = image, "latest"
+
+            yield f"$ docker pull {image}"
+            
+            # Use low-level API for streaming
+            for chunk in self.client.api.pull(repo, tag=tag, stream=True, decode=True):
+                status = chunk.get("status", "")
+                progress = chunk.get("progress", "")
+                layer_id = chunk.get("id", "")
+                error = chunk.get("error", "")
+                
+                if error:
+                    yield f"ERROR: {error}"
+                    return
+                
+                if layer_id:
+                    line = f"{layer_id}: {status}"
+                    if progress:
+                        line += f" {progress}"
+                    yield line
+                elif status:
+                    yield status
+            
+            yield "Pull complete ✔"
+        except Exception as e:
+            yield f"ERROR: {str(e)}"
+    
     def get_container_by_pattern(self, pattern: str) -> list:
         try:
             containers = self.client.containers.list(all=True)

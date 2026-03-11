@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import uuid
+import os
 
 Base = declarative_base()
 
@@ -34,7 +35,8 @@ class Instance(Base):
     
     group = relationship("Group", back_populates="instances")
 
-DATABASE_URL = "sqlite:///./data/openclaw.db"
+data_dir = os.getenv("OPENCLAW_DATA_DIR", "./data")
+DATABASE_URL = f"sqlite:///{os.path.join(data_dir, 'openclaw.db')}"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
