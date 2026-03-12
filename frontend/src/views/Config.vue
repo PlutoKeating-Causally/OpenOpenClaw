@@ -335,16 +335,22 @@
             </el-tab-pane>
 
             <el-tab-pane label="openclaw.json" name="openclaw">
-              <el-form-item label="">
-                <el-input
+              <div class="editor-container">
+                <codemirror
                   v-model="openclawJsonStr"
-                  type="textarea"
-                  :rows="20"
                   placeholder='{"tools": {...}}'
+                  :style="{ height: '500px' }"
+                  :autofocus="true"
+                  :indent-with-tab="true"
+                  :tab-size="2"
+                  :extensions="editorExtensions"
                 />
-              </el-form-item>
-              <el-button @click="formatJson">格式化 JSON</el-button>
-              <el-button @click="validateJson">验证 JSON</el-button>
+              </div>
+              <div style="margin-top: 10px;">
+                <el-button @click="formatJson">格式化 JSON</el-button>
+                <el-button @click="validateJson">验证 JSON</el-button>
+                <el-button type="warning" @click="restoreDefaultConfig">恢复默认</el-button>
+              </div>
             </el-tab-pane>
 
             <el-tab-pane label="配置对比" name="compare">
@@ -392,9 +398,11 @@
                 <el-divider>Gateway 设置</el-divider>
                 <el-form-item label="绑定模式">
                   <el-select v-model="config.openclaw.gateway.bind">
-                    <el-option label="0.0.0.0 (所有网络)" value="0.0.0.0" />
-                    <el-option label="127.0.0.1 (仅本地)" value="127.0.0.1" />
+                    <el-option label="auto (自动)" value="auto" />
+                    <el-option label="loopback (仅本地)" value="loopback" />
                     <el-option label="lan (局域网)" value="lan" />
+                    <el-option label="tailnet (Tailscale)" value="tailnet" />
+                    <el-option label="custom (自定义)" value="custom" />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="Gateway 端口">
@@ -414,33 +422,15 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item label="允许宿主机执行">
-                  <el-switch v-model="config.openclaw.tools.exec.host" true-value="host" false-value="container" />
+                  <el-switch v-model="config.openclaw.tools.exec.host" true-value="gateway" false-value="sandbox" />
                 </el-form-item>
 
-                <el-divider>文件访问 (file)</el-divider>
-                <el-form-item label="允许访问目录">
-                  <el-select v-model="config.openclaw.tools.file.allowedDirectories" multiple style="width: 100%;">
-                    <el-option label="/root" value="/root" />
-                    <el-option label="/root/.openclaw" value="/root/.openclaw" />
-                    <el-option label="/root/data" value="/root/data" />
-                  </el-select>
-                </el-form-item>
 
-                <el-divider>网页获取 (webFetch)</el-divider>
+                <el-divider>网页获取 (web)</el-divider>
                 <el-form-item label="启用网页获取">
-                  <el-switch v-model="config.openclaw.tools.webFetch.enabled" />
+                  <el-switch :model-value="!!config.openclaw.tools.web.fetch" @update:model-value="v => config.openclaw.tools.web.fetch = v ? {} : undefined" />
                 </el-form-item>
 
-                <el-divider>Agent 默认工具权限</el-divider>
-                <el-form-item label="允许执行终端命令">
-                  <el-switch v-model="config.openclaw.agents.defaults.tools.execAllowed" />
-                </el-form-item>
-                <el-form-item label="允许文件访问">
-                  <el-switch v-model="config.openclaw.agents.defaults.tools.fileAllowed" />
-                </el-form-item>
-                <el-form-item label="允许网页获取">
-                  <el-switch v-model="config.openclaw.agents.defaults.tools.webFetchAllowed" />
-                </el-form-item>
               </el-form>
             </el-tab-pane>
           </el-tabs>
@@ -453,8 +443,32 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { groupApi, instanceApi, configApi } from '../api'
+import { Codemirror } from 'vue-codemirror'
+import { json } from '@codemirror/lang-json'
+import { EditorView } from '@codemirror/view'
+
+const editorExtensions = [
+  json(),
+  EditorView.lineWrapping,
+  EditorView.theme({
+    "&": {
+      fontSize: "14px"
+    },
+    ".cm-content": {
+      fontFamily: "Fira Code, monospace"
+    },
+    // Zebra striping
+    ".cm-line:nth-child(even)": {
+      backgroundColor: "#f9f9f9"
+    },
+    // Highlight active line
+    ".cm-activeLine": {
+      backgroundColor: "#e8f0fe"
+    }
+  })
+]
 
 const route = useRoute()
 
@@ -502,20 +516,10 @@ const config = ref({
   },
   openclaw: {
     tools: {
-      exec: { security: 'full', host: 'host' },
-      file: { allowedDirectories: ['/root'] },
-      webFetch: { enabled: true }
+      exec: { security: 'full', host: 'gateway' },
+      web: { fetch: {} }
     },
-    agents: {
-      defaults: {
-        tools: {
-          execAllowed: true,
-          fileAllowed: true,
-          webFetchAllowed: true
-        }
-      }
-    },
-    gateway: { bind: '0.0.0.0', port: 18987 }
+    gateway: { bind: 'lan', port: 18987 }
   }
 })
 
@@ -523,20 +527,10 @@ const openclawJsonStr = ref('')
 
 const defaultTemplate = ref({
   tools: {
-    exec: { security: 'full', host: 'host' },
-    file: { allowedDirectories: ['/root'] },
-    webFetch: { enabled: true }
+    exec: { security: 'full', host: 'gateway' },
+    web: { fetch: {} }
   },
-  agents: {
-    defaults: {
-      tools: {
-        execAllowed: true,
-        fileAllowed: true,
-        webFetchAllowed: true
-      }
-    }
-  },
-  gateway: { bind: '0.0.0.0', port: 18987 }
+  gateway: { bind: 'lan', port: 18987 }
 })
 
 const currentConfigCompare = ref({})
@@ -592,6 +586,17 @@ const saveConfig = async () => {
   }
 
   try {
+    // Sync JSON string to object before saving
+    try {
+      if (openclawJsonStr.value) {
+        config.value.openclaw = JSON.parse(openclawJsonStr.value)
+      }
+    } catch (e) {
+      activeTab.value = 'openclaw'
+      ElMessage.error('openclaw.json 格式错误，请检查并修正后再保存')
+      return
+    }
+
     const data = {
       env_vars: config.value.env,
       openclaw_json: config.value.openclaw
@@ -602,6 +607,10 @@ const saveConfig = async () => {
     } else {
       await groupApi.updateConfig(selectedTarget.value, data)
     }
+
+    // Refresh comparison state after save
+    currentConfigCompare.value = JSON.parse(JSON.stringify(config.value.openclaw))
+    computeConfigDiffs()
 
     ElMessage.success('配置保存成功')
   } catch (error) {
@@ -689,6 +698,23 @@ const validateJson = () => {
   }
 }
 
+const restoreDefaultConfig = () => {
+  ElMessageBox.confirm(
+    '确定要恢复默认配置吗？这将覆盖当前编辑器中的内容。',
+    '警告',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).then(() => {
+    config.value.openclaw = JSON.parse(JSON.stringify(defaultTemplate.value))
+    openclawJsonStr.value = JSON.stringify(config.value.openclaw, null, 2)
+    computeConfigDiffs()
+    ElMessage.success('已恢复默认配置')
+  }).catch(() => {})
+}
+
 const loadTemplates = async () => {
   try {
     const res = await configApi.getTemplates()
@@ -755,6 +781,12 @@ onMounted(() => {
 <style scoped>
 .config {
   padding: 20px;
+}
+
+.editor-container {
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .card-header {

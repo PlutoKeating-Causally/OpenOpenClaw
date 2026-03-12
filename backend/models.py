@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, ForeignKey, Text
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, ForeignKey, Text, event, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -29,6 +29,7 @@ class Instance(Base):
     name = Column(String(100), nullable=False)
     container_name = Column(String(100), nullable=False, unique=True)
     host_port = Column(Integer, nullable=False)
+    container_port = Column(Integer, nullable=False, default=18987)
     status = Column(String(20), default="stopped") # running, stopped, removed
     created_at = Column(DateTime, default=datetime.utcnow)
     config_snapshot = Column(Text, nullable=True) # JSON snapshot of config
@@ -42,3 +43,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Auto-migrate: add container_port column if missing (for existing DBs)
+    insp = inspect(engine)
+    columns = [c['name'] for c in insp.get_columns('instances')]
+    if 'container_port' not in columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE instances ADD COLUMN container_port INTEGER DEFAULT 18987"))
+            conn.commit()

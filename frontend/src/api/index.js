@@ -53,6 +53,7 @@ export const instanceApi = {
   export: (id) => api.post(`/instances/${id}/export`),
   import: (sourcePath, groupId, name) => api.post('/instances/import', { source_path: sourcePath, group_id: groupId, name }),
   importDirectory: (sourceDir, groupId, name) => api.post('/instances/import-directory', { source_dir: sourceDir, group_id: groupId, name }),
+  updatePorts: (id, data) => api.put(`/instances/${id}/ports`, data),
   getTerminal: (id) => api.get(`/instances/${id}/terminal`),
   upload: (groupId, name, file) => {
     const formData = new FormData()
@@ -77,6 +78,7 @@ export const systemApi = {
   checkEnv: () => api.get('/system/env-check'),
   getNetworks: () => api.get('/system/networks'),
   getImages: () => api.get('/system/images'),
+  browseDirectory: () => api.get('/system/browse-directory'),
   download: (path) => api.get('/download', { params: { path } }, { responseType: 'blob' })
 }
 

@@ -93,9 +93,15 @@
 
             <el-tab-pane label="从目录导入" name="directory">
               <el-form label-width="100px">
-                <el-form-item label="源目录">
-                  <el-input v-model="importSourceDir" placeholder="请输入源 .openclaw 目录路径" style="width: 100%;" />
-                  <div class="form-tip">选择已有 OpenClaw 实例的 .openclaw 目录路径</div>
+                <el-form-item label="实例根目录">
+                  <div style="display: flex; gap: 10px;">
+                    <el-input v-model="importSourceDir" placeholder="请选择或输入实例根目录（映射为容器内 /root）" style="flex: 1" />
+                    <el-button @click="handleBrowse">
+                      <el-icon><Folder /></el-icon>
+                      浏览
+                    </el-button>
+                  </div>
+                  <div class="form-tip">选择已有 OpenClaw 实例的本地根目录（将映射为容器内 /root）</div>
                 </el-form-item>
                 <el-form-item label="目标群组">
                   <el-select v-model="importGroupIdDir" placeholder="选择目标群组" style="width: 100%;">
@@ -152,17 +158,13 @@
 
     <el-card style="margin-top: 20px;">
       <template #header>
-        <span>灵魂文件说明</span>
+        <span>实例数据说明（映射为容器内 /root）</span>
       </template>
       <el-descriptions :column="1" border>
-        <el-descriptions-item label="openclaw.json">OpenClaw 主配置文件</el-descriptions-item>
-        <el-descriptions-item label="workspace/">AI 工作区全部内容</el-descriptions-item>
-        <el-descriptions-item label="agents/{cid}/">各会话的智能体状态与认证配置</el-descriptions-item>
-        <el-descriptions-item label="memory/">记忆数据（向量索引 .sqlite + 对话日志 .md）</el-descriptions-item>
-        <el-descriptions-item label="skills/">技能配置</el-descriptions-item>
+        <el-descriptions-item label="实例全量数据">包含配置、记忆、技能等容器内部 /root 下的所有文件</el-descriptions-item>
       </el-descriptions>
       <el-alert type="warning" :closable="false" style="margin-top: 15px;">
-        导出实例时，将导出完整的"灵魂文件"，包括配置、记忆、技能等全部数据。
+        导出实例时，将打包完整的实例数据目录。导入时，该目录将直接挂载为容器内部的 /root。
       </el-alert>
     </el-card>
 
@@ -173,7 +175,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { groupApi, instanceApi } from '../api'
+import { groupApi, instanceApi, systemApi } from '../api'
 import OperationLog from '../components/OperationLog.vue'
 
 const operationLog = ref(null)
@@ -233,7 +235,7 @@ const exportInstance = async () => {
     link.click()
     document.body.removeChild(link)
   } catch (error) {
-    ElMessage.error('导出失败: ' + error)
+    ElMessage.error('导出失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   }
 }
 
@@ -251,7 +253,7 @@ const exportGroup = async () => {
     link.click()
     document.body.removeChild(link)
   } catch (error) {
-    ElMessage.error('导出失败: ' + error)
+    ElMessage.error('导出失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   }
 }
 
@@ -281,7 +283,7 @@ const uploadInstance = async () => {
     }
     loadInstances()
   } catch (error) {
-    ElMessage.error('上传导入失败: ' + error)
+    ElMessage.error('上传导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   } finally {
     uploading.value = false
   }
@@ -305,7 +307,7 @@ const uploadGroup = async () => {
       groupUploadRef.value.clearFiles()
     }
   } catch (error) {
-    ElMessage.error('上传导入失败: ' + error)
+    ElMessage.error('上传导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   } finally {
     uploadingGroup.value = false
   }
@@ -320,7 +322,18 @@ const importFromDirectory = async () => {
     importInstanceNameDir.value = ''
     loadInstances()
   } catch (error) {
-    ElMessage.error('导入失败: ' + error)
+    ElMessage.error('导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
+  }
+}
+
+const handleBrowse = async () => {
+  try {
+    const res = await systemApi.browseDirectory()
+    if (res && res.path) {
+      importSourceDir.value = res.path
+    }
+  } catch (error) {
+    ElMessage.error('无法打开目录选择器: ' + error)
   }
 }
 
@@ -329,7 +342,7 @@ const importGroup = async () => {
     const result = await groupApi.import(importGroupFile.value)
     ElMessage.success('群组导入成功: ' + result.message)
   } catch (error) {
-    ElMessage.error('导入失败: ' + error)
+    ElMessage.error('导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   }
 }
 

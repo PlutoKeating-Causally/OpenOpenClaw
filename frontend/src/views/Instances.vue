@@ -30,7 +30,11 @@
         <el-table-column type="selection" width="50" />
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="group_name" label="群组" />
-        <el-table-column prop="host_port" label="端口" width="80" />
+        <el-table-column label="端口" width="130">
+          <template #default="{ row }">
+            <span>{{ row.host_port }}:{{ row.container_port || 18987 }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'running' ? 'success' : row.status === 'exited' ? 'danger' : 'info'">
@@ -39,15 +43,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" />
-        <el-table-column label="操作" width="320">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="success" v-if="row.status !== 'running'" @click="startInstance(row.id)">启动</el-button>
-            <el-button size="small" type="warning" v-else @click="stopInstance(row.id)">停止</el-button>
-            <el-button size="small" @click="restartInstance(row.id)" :disabled="row.status !== 'running'">重启</el-button>
-            <el-button size="small" @click="viewInstance(row)">详情</el-button>
-            <el-button size="small" @click="openTerminal(row)" :disabled="row.status !== 'running'">终端</el-button>
-            <el-button size="small" type="info" @click="showCloneDialog(row)">克隆</el-button>
-            <el-button size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
+            <div class="action-buttons">
+              <el-button size="small" type="success" v-if="row.status !== 'running'" @click="startInstance(row.id)">启动</el-button>
+              <el-button size="small" type="warning" v-else @click="stopInstance(row.id)">停止</el-button>
+              <el-button size="small" @click="restartInstance(row.id)" :disabled="row.status !== 'running'">重启</el-button>
+              <el-button size="small" @click="viewInstance(row)">详情</el-button>
+              <el-button size="small" @click="openTerminal(row)" :disabled="row.status !== 'running'">终端</el-button>
+              <el-button size="small" type="info" @click="showCloneDialog(row)">克隆</el-button>
+              <el-button size="small" type="danger" @click="confirmDelete(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -63,6 +69,14 @@
         <el-form-item label="实例名称" prop="name">
           <el-input v-model="form.name" placeholder="请输入实例名称" />
         </el-form-item>
+        <el-form-item label="容器端口">
+          <el-input-number v-model="form.container_port" :min="1" :max="65535" placeholder="18987" />
+          <div style="color: #909399; font-size: 12px; margin-top: 4px;">OpenClaw Gateway 在容器内监听的端口，默认 18987</div>
+        </el-form-item>
+        <el-form-item label="宿主机端口">
+          <el-input-number v-model="form.host_port" :min="1" :max="65535" :placeholder="'自动分配'" />
+          <div style="color: #909399; font-size: 12px; margin-top: 4px;">留空则自动从群组端口范围分配</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -76,7 +90,8 @@
           <el-descriptions-item label="名称">{{ selectedInstance.name }}</el-descriptions-item>
           <el-descriptions-item label="群组">{{ selectedInstance.group_name }}</el-descriptions-item>
           <el-descriptions-item label="容器名">{{ selectedInstance.container_name }}</el-descriptions-item>
-          <el-descriptions-item label="端口">{{ selectedInstance.host_port }}</el-descriptions-item>
+          <el-descriptions-item label="宿主机端口">{{ selectedInstance.host_port }}</el-descriptions-item>
+          <el-descriptions-item label="容器 Gateway 端口">{{ selectedInstance.container_port || 18987 }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="selectedInstance.status === 'running' ? 'success' : 'info'">
               {{ selectedInstance.status }}
@@ -84,6 +99,24 @@
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ selectedInstance.created_at }}</el-descriptions-item>
         </el-descriptions>
+
+        <el-divider>端口配置</el-divider>
+        <el-alert type="info" :closable="false" style="margin-bottom: 12px;" v-if="selectedInstance.status === 'running'">
+          实例运行中，请停止后再修改端口
+        </el-alert>
+        <el-form :inline="true" label-width="120px">
+          <el-form-item label="宿主机端口">
+            <el-input-number v-model="editHostPort" :min="1" :max="65535" :disabled="selectedInstance.status === 'running'" />
+          </el-form-item>
+          <el-form-item label="容器 Gateway 端口">
+            <el-input-number v-model="editContainerPort" :min="1" :max="65535" :disabled="selectedInstance.status === 'running'" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="savePortConfig" :disabled="selectedInstance.status === 'running'">
+              保存端口配置
+            </el-button>
+          </el-form-item>
+        </el-form>
 
         <el-divider>资源监控</el-divider>
         <el-row :gutter="20" v-if="instanceStats.cpu_percent !== undefined">
@@ -179,8 +212,13 @@ const instanceStats = ref({})
 
 const form = ref({
   group_id: '',
-  name: ''
+  name: '',
+  container_port: 18987,
+  host_port: null
 })
+
+const editHostPort = ref(0)
+const editContainerPort = ref(18987)
 
 const rules = {
   group_id: [{ required: true, message: '请选择群组', trigger: 'change' }],
@@ -217,7 +255,9 @@ watch(() => route.params.groupId, (newVal) => {
 const showCreateDialog = () => {
   form.value = {
     group_id: filterGroup.value || (groups.value[0]?.id || ''),
-    name: ''
+    name: '',
+    container_port: 18987,
+    host_port: null
   }
   dialogVisible.value = true
 }
@@ -231,6 +271,8 @@ const submitForm = async () => {
     const result = await operationLog.value.execute(`创建实例: ${form.value.name}`, async (addLog) => {
       addLog(`目标群组: ${form.value.group_id}`, 'info')
       addLog(`实例名称: ${form.value.name}`, 'info')
+      if (form.value.host_port) addLog(`映射端口: ${form.value.host_port}`, 'info')
+      addLog(`容器内部端口: ${form.value.container_port}`, 'info')
       return await instanceApi.create(form.value)
     })
     ElMessage.success('实例创建成功')
@@ -318,11 +360,41 @@ const formatBytes = (bytes) => {
 
 const viewInstance = async (row) => {
   try {
-    selectedInstance.value = await instanceApi.getById(row.id)
+    const data = await instanceApi.getById(row.id)
+    selectedInstance.value = data
+    editHostPort.value = data.host_port
+    editContainerPort.value = data.container_port || 18987
     drawerVisible.value = true
     refreshStats()
   } catch (error) {
     ElMessage.error('获取实例详情失败')
+  }
+}
+
+const savePortConfig = async () => {
+  if (!selectedInstance.value) return
+  
+  try {
+    await operationLog.value.execute(`修改端口: ${selectedInstance.value.name}`, async (addLog) => {
+      addLog(`映射端口: ${editHostPort.value}`, 'info')
+      addLog(`容器内部端口: ${editContainerPort.value}`, 'info')
+      
+      const result = await instanceApi.updatePorts(selectedInstance.value.id, {
+        host_port: editHostPort.value,
+        container_port: editContainerPort.value
+      })
+      
+      // Update local state
+      selectedInstance.value.host_port = result.host_port
+      selectedInstance.value.container_port = result.container_port
+      
+      return result
+    })
+    
+     ElMessage.success('端口配置已更新，下次启动生效')
+     loadInstances()
+  } catch (error) {
+    ElMessage.error('修改端口失败: ' + error)
   }
 }
 
@@ -475,5 +547,16 @@ onMounted(() => {
   overflow: auto;
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.action-buttons .el-button {
+  margin-left: 0 !important;
+  min-width: 48px;
 }
 </style>
