@@ -79,7 +79,7 @@ export const systemApi = {
   getNetworks: () => api.get('/system/networks'),
   getImages: () => api.get('/system/images'),
   browseDirectory: () => api.get('/system/browse-directory'),
-  download: (path) => api.get('/download', { params: { path } }, { responseType: 'blob' })
+  download: (path) => api.get('/download', { params: { path }, responseType: 'blob' })
 }
 
 export default api

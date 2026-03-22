@@ -29,7 +29,7 @@ class Instance(Base):
     name = Column(String(100), nullable=False)
     container_name = Column(String(100), nullable=False, unique=True)
     host_port = Column(Integer, nullable=False)
-    container_port = Column(Integer, nullable=False, default=18987)
+    container_port = Column(Integer, nullable=False, default=18789)
     status = Column(String(20), default="stopped") # running, stopped, removed
     created_at = Column(DateTime, default=datetime.utcnow)
     config_snapshot = Column(Text, nullable=True) # JSON snapshot of config
@@ -48,5 +48,5 @@ def init_db():
     columns = [c['name'] for c in insp.get_columns('instances')]
     if 'container_port' not in columns:
         with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE instances ADD COLUMN container_port INTEGER DEFAULT 18987"))
+            conn.execute(text("ALTER TABLE instances ADD COLUMN container_port INTEGER DEFAULT 18789"))
             conn.commit()

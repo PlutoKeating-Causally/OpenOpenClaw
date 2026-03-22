@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-导入原有的 OpenClaw 实例到 OpenOpenclaw 管理系统
+导入原有的 OpenClaw 实例到 OpenOpenClaw 管理系统
 """
 
 import os
@@ -24,30 +24,43 @@ def import_existing_instances():
     config_mgr = ConfigManager()
     
     # Source directory with existing instances
-    source_dir = "/Users/causally/openclaws"
+    source_dir = os.getenv("SOURCE_OPENCLAW_DIR", "./openclaws")
     
     # Check if group exists, create if not
-    group = db.query(Group).filter(Group.name == "PKs-Intern-Group").first()
+    group_name = os.getenv("IMPORT_GROUP_NAME", "Imported-Group")
+    group = db.query(Group).filter(Group.name == group_name).first()
     if not group:
-        print("创建群组: PKs-Intern-Group")
+        print(f"创建群组: {group_name}")
         group = Group(
-            name="PKs-Intern-Group",
-            root_dir="groups/pks-intern",
-            docker_network="PKs-Causally-Intern-Group",
-            port_range_start=18781,
-            port_range_end=18790,
-            description="原有的 PKs Intern Group"
+            name=group_name,
+            root_dir=f"groups/{group_name.lower().replace(' ', '-')}",
+            docker_network=f"openclaw_network_{group_name.lower().replace(' ', '_')}",
+            port_range_start=18791,
+            port_range_end=18800,
+            description=f"从 {source_dir} 导入的群组"
         )
         db.add(group)
         db.commit()
         db.refresh(group)
     
-    # Instance configurations
-    instances_config = [
-        {"name": "Angela", "port": 18781},
-        {"name": "James", "port": 18782},
-        {"name": "Michel", "port": 18783},
-    ]
+    # Instance configurations (can be overridden by environment variable JSON string)
+    import_config_json = os.getenv("IMPORT_INSTANCES_JSON")
+    if import_config_json:
+        try:
+            instances_config = json.loads(import_config_json)
+        except json.JSONDecodeError:
+            print("警告: IMPORT_INSTANCES_JSON 格式错误，使用默认配置")
+            instances_config = [
+                {"name": "Angela", "port": 18781},
+                {"name": "James", "port": 18782},
+                {"name": "Michel", "port": 18783},
+            ]
+    else:
+        instances_config = [
+            {"name": "Angela", "port": 18781},
+            {"name": "James", "port": 18782},
+            {"name": "Michel", "port": 18783},
+        ]
     
     data_dir = os.getenv("OPENCLAW_DATA_DIR", "./data")
     group_dir = os.path.join(data_dir, group.root_dir)
@@ -72,7 +85,7 @@ def import_existing_instances():
             name=name,
             container_name=container_name,
             host_port=port,
-            container_port=18987,
+            container_port=18789,
             status="stopped"
         )
         db.add(instance)
@@ -90,7 +103,7 @@ def import_existing_instances():
             print(f"  警告: 源目录不存在 {source_instance_dir}")
             # Create default config
             os.makedirs(target_instance_dir, exist_ok=True)
-            config_mgr.create_default_config(target_instance_dir, gateway_port=18987)
+            config_mgr.create_default_config(target_instance_dir, gateway_port=18789)
     
     db.commit()
     print("\n导入完成！")

@@ -29,7 +29,7 @@ def test_default_config_generation():
         config_mgr.data_dir = tmpdir
         
         # Create default config
-        config_mgr.create_default_config(tmpdir, gateway_port=18987)
+        config_mgr.create_default_config(tmpdir, gateway_port=18789)
         
         # Check if openclaw.json was created
         config_path = os.path.join(tmpdir, ".openclaw", "openclaw.json")
@@ -40,7 +40,7 @@ def test_default_config_generation():
         
         # Verify all required sections exist
         required_sections = [
-            'meta', 'wizard', 'auth', 'models', 'agents', 
+            'env', 'meta', 'wizard', 'auth', 'models', 'agents', 
             'tools', 'commands', 'session', 'hooks', 
             'channels', 'gateway', 'skills', 'plugins'
         ]
@@ -49,7 +49,7 @@ def test_default_config_generation():
             assert section in config, f"缺少必要配置段: {section}"
         
         # Verify gateway port
-        assert config['gateway']['port'] == 18987, "网关端口配置错误"
+        assert config['gateway']['port'] == 18789, "网关端口配置错误"
         
         # Verify tools configuration
         assert config['tools']['web']['search']['enabled'] == True, "Web搜索未启用"
@@ -69,7 +69,7 @@ def test_config_migration():
         # Create an old-style config
         old_config = {
             "gateway": {
-                "port": 18987
+                "port": 18789
             },
             "tools": {
                 "exec": {
@@ -83,7 +83,7 @@ def test_config_migration():
         
         # Verify all sections were added
         required_sections = [
-            'meta', 'wizard', 'auth', 'models', 'agents', 
+            'env', 'meta', 'wizard', 'auth', 'models', 'agents', 
             'tools', 'commands', 'session', 'hooks', 
             'channels', 'gateway', 'skills', 'plugins'
         ]
@@ -131,10 +131,10 @@ def test_allowed_origins_sync():
         config_mgr.data_dir = tmpdir
         
         # Create initial config
-        config_mgr.create_default_config(tmpdir, gateway_port=18987)
+        config_mgr.create_default_config(tmpdir, gateway_port=18789)
         
         # Sync with host port
-        config_mgr.sync_allowed_origins(tmpdir, container_port=18987, host_port=18001)
+        config_mgr.sync_allowed_origins(tmpdir, container_port=18789, host_port=18001)
         
         config_path = os.path.join(tmpdir, ".openclaw", "openclaw.json")
         with open(config_path, 'r') as f:
@@ -144,9 +144,8 @@ def test_allowed_origins_sync():
         origins = config['gateway']['controlUi']['allowedOrigins']
         
         # Should have both container port and host port
-        assert any(':18987' in o for o in origins), "缺少容器端口"
+        assert any(':18789' in o for o in origins), "缺少容器端口"
         assert any(':18001' in o for o in origins), "缺少主机端口"
-        assert any('192.168.13.13' in o for o in origins), "缺少局域网 IP"
         
         print("✓ Allowed Origins 同步测试通过")
         return True
@@ -159,7 +158,7 @@ def test_env_file_generation():
         config_mgr = ConfigManager()
         config_mgr.data_dir = tmpdir
         
-        config_mgr.create_default_config(tmpdir, gateway_port=18987)
+        config_mgr.create_default_config(tmpdir, gateway_port=18789)
         
         env_path = os.path.join(tmpdir, ".openclaw", ".env")
         assert os.path.exists(env_path), ".env 文件未创建"
@@ -167,9 +166,11 @@ def test_env_file_generation():
         with open(env_path, 'r') as f:
             content = f.read()
         
-        # Verify essential variables
+        # Verify essential variables (official OpenClaw env var names)
         assert 'OPENCLAW_HOME=/root' in content, "缺少 OPENCLAW_HOME"
-        assert 'OPENCLAW_GATEWAY_PORT=18987' in content, "缺少 OPENCLAW_GATEWAY_PORT"
+        assert 'OPENCLAW_GATEWAY_PORT=18789' in content, "缺少 OPENCLAW_GATEWAY_PORT"
+        assert 'GEMINI_API_KEY=' in content, "缺少 GEMINI_API_KEY (official Google env var)"
+        assert 'OPENROUTER_API_KEY=' in content, "缺少 OPENROUTER_API_KEY"
         
         print("✓ 环境变量文件生成测试通过")
         return True

@@ -53,8 +53,8 @@
               </el-collapse-item>
               <el-collapse-item title="Google AI (Gemini)" name="google">
                 <el-form label-width="160px">
-                  <el-form-item label="GOOGLE_GENERATIVE_AI_API_KEY">
-                    <el-input v-model="templates.google.GOOGLE_GENERATIVE_AI_API_KEY" placeholder="xxx" />
+                  <el-form-item label="GEMINI_API_KEY">
+                    <el-input v-model="templates.google.GEMINI_API_KEY" placeholder="xxx" />
                   </el-form-item>
                 </el-form>
               </el-collapse-item>
@@ -87,8 +87,8 @@
               </el-collapse-item>
               <el-collapse-item title="Ollama (本地)" name="ollama">
                 <el-form label-width="160px">
-                  <el-form-item label="OLLAMA_BASE_URL">
-                    <el-input v-model="templates.ollama.OLLAMA_BASE_URL" placeholder="http://localhost:11434" />
+                  <el-form-item label="OLLAMA_API_KEY">
+                    <el-input v-model="templates.ollama.OLLAMA_API_KEY" placeholder="xxx" />
                   </el-form-item>
                 </el-form>
               </el-collapse-item>
@@ -138,6 +138,48 @@
                 <el-form label-width="160px">
                   <el-form-item label="VOYAGE_API_KEY">
                     <el-input v-model="templates.voyage.VOYAGE_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="Kimi (Moonshot)" name="kimi">
+                <el-form label-width="160px">
+                  <el-form-item label="KIMI_API_KEY">
+                    <el-input v-model="templates.kimi.KIMI_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="Venice" name="venice">
+                <el-form label-width="160px">
+                  <el-form-item label="VENICE_API_KEY">
+                    <el-input v-model="templates.venice.VENICE_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="Nvidia" name="nvidia">
+                <el-form label-width="160px">
+                  <el-form-item label="NVIDIA_API_KEY">
+                    <el-input v-model="templates.nvidia.NVIDIA_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="Synthetic" name="synthetic">
+                <el-form label-width="160px">
+                  <el-form-item label="SYNTHETIC_API_KEY">
+                    <el-input v-model="templates.synthetic.SYNTHETIC_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="Kilocode" name="kilocode">
+                <el-form label-width="160px">
+                  <el-form-item label="KILOCODE_API_KEY">
+                    <el-input v-model="templates.kilocode.KILOCODE_API_KEY" placeholder="xxx" />
+                  </el-form-item>
+                </el-form>
+              </el-collapse-item>
+              <el-collapse-item title="AI Gateway" name="ai_gateway">
+                <el-form label-width="160px">
+                  <el-form-item label="AI_GATEWAY_API_KEY">
+                    <el-input v-model="templates.ai_gateway.AI_GATEWAY_API_KEY" placeholder="xxx" />
                   </el-form-item>
                 </el-form>
               </el-collapse-item>
@@ -266,11 +308,11 @@
                 <el-form-item label="MINIMAX_API_KEY">
                   <el-input v-model="config.env.MINIMAX_API_KEY" />
                 </el-form-item>
-                <el-form-item label="GOOGLE_GENERATIVE_AI_API_KEY">
-                  <el-input v-model="config.env.GOOGLE_GENERATIVE_AI_API_KEY" />
+                <el-form-item label="GEMINI_API_KEY">
+                  <el-input v-model="config.env.GEMINI_API_KEY" />
                 </el-form-item>
-                <el-form-item label="OLLAMA_BASE_URL">
-                  <el-input v-model="config.env.OLLAMA_BASE_URL" placeholder="http://localhost:11434" />
+                <el-form-item label="OLLAMA_API_KEY">
+                  <el-input v-model="config.env.OLLAMA_API_KEY" placeholder="" />
                 </el-form-item>
                 <el-form-item label="OPENROUTER_API_KEY">
                   <el-input v-model="config.env.OPENROUTER_API_KEY" />
@@ -292,6 +334,36 @@
                 </el-form-item>
                 <el-form-item label="VOYAGE_API_KEY">
                   <el-input v-model="config.env.VOYAGE_API_KEY" />
+                </el-form-item>
+                <el-form-item label="ZAI_API_KEY">
+                  <el-input v-model="config.env.ZAI_API_KEY" />
+                </el-form-item>
+                <el-form-item label="CEREBRAS_API_KEY">
+                  <el-input v-model="config.env.CEREBRAS_API_KEY" />
+                </el-form-item>
+                <el-form-item label="TOGETHER_API_KEY">
+                  <el-input v-model="config.env.TOGETHER_API_KEY" />
+                </el-form-item>
+                <el-form-item label="MOONSHOT_API_KEY">
+                  <el-input v-model="config.env.MOONSHOT_API_KEY" />
+                </el-form-item>
+                <el-form-item label="KIMI_API_KEY">
+                  <el-input v-model="config.env.KIMI_API_KEY" />
+                </el-form-item>
+                <el-form-item label="VENICE_API_KEY">
+                  <el-input v-model="config.env.VENICE_API_KEY" />
+                </el-form-item>
+                <el-form-item label="NVIDIA_API_KEY">
+                  <el-input v-model="config.env.NVIDIA_API_KEY" />
+                </el-form-item>
+                <el-form-item label="SYNTHETIC_API_KEY">
+                  <el-input v-model="config.env.SYNTHETIC_API_KEY" />
+                </el-form-item>
+                <el-form-item label="KILOCODE_API_KEY">
+                  <el-input v-model="config.env.KILOCODE_API_KEY" />
+                </el-form-item>
+                <el-form-item label="AI_GATEWAY_API_KEY">
+                  <el-input v-model="config.env.AI_GATEWAY_API_KEY" />
                 </el-form-item>
                 <el-form-item label="AZURE_OPENAI_ENDPOINT">
                   <el-input v-model="config.env.AZURE_OPENAI_ENDPOINT" placeholder="https://xxx.openai.azure.com" />
@@ -409,7 +481,7 @@
                   <el-input-number v-model="config.openclaw.gateway.port" :min="1" :max="65535" />
                 </el-form-item>
                 <el-form-item label="允许的Origins" v-if="config.openclaw.gateway.bind === 'lan'">
-                  <el-input v-model="config.env.OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS" placeholder="* 或 http://192.168.1.100:18987" />
+                  <el-input v-model="config.env.OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS" placeholder="* 或 http://192.168.1.100:18789" />
                   <div class="form-tip">局域网模式下建议设置为 * 或具体的IP地址，多个用逗号分隔</div>
                 </el-form-item>
 
@@ -484,42 +556,50 @@ const instances = ref([])
 const templates = ref({
   openai: { OPENAI_API_KEY: '' },
   anthropic: { ANTHROPIC_API_KEY: '' },
-  google: { GOOGLE_GENERATIVE_AI_API_KEY: '' },
-  azure: { AZURE_OPENAI_API_KEY: '', AZURE_OPENAI_ENDPOINT: '', AZURE_OPENAI_DEPLOYMENT: '' },
+  google: { GEMINI_API_KEY: '' },
   deepseek: { DEEPSEEK_API_KEY: '' },
   minimax: { MINIMAX_API_KEY: '' },
-  ollama: { OLLAMA_BASE_URL: 'http://localhost:11434' },
+  ollama: { OLLAMA_API_KEY: '' },
   openrouter: { OPENROUTER_API_KEY: '' },
   huggingface: { HUGGINGFACE_HUB_TOKEN: '' },
   groq: { GROQ_API_KEY: '' },
   xai: { XAI_API_KEY: '' },
-  cohere: { COHERE_API_KEY: '' },
   mistral: { MISTRAL_API_KEY: '' },
-  voyage: { VOYAGE_API_KEY: '' }
+  voyage: { VOYAGE_API_KEY: '' },
+  zai: { ZAI_API_KEY: '' },
+  cerebras: { CEREBRAS_API_KEY: '' },
+  together: { TOGETHER_API_KEY: '' },
+  moonshot: { MOONSHOT_API_KEY: '' },
+  kimi: { KIMI_API_KEY: '' },
+  venice: { VENICE_API_KEY: '' },
+  nvidia: { NVIDIA_API_KEY: '' },
+  synthetic: { SYNTHETIC_API_KEY: '' },
+  kilocode: { KILOCODE_API_KEY: '' },
+  ai_gateway: { AI_GATEWAY_API_KEY: '' }
 })
 
 const channelTemplates = ref({
   telegram: { TELEGRAM_BOT_TOKEN: '' },
-  discord: { DISCORD_BOT_TOKEN: '', DISCORD_GUILD_ID: '', DISCORD_USER_ID: '' },
+  discord: { DISCORD_BOT_TOKEN: '' },
   feishu: { FEISHU_APP_ID: '', FEISHU_APP_SECRET: '' },
-  whatsapp: { WHATSAPP_SESSION_PATH: '/root/.openclaw/credentials/whatsapp' },
-  slack: { SLACK_BOT_TOKEN: '', SLACK_TEAM_ID: '' },
-  signal: { 'SIGNAL电话号码': '' }
+  slack: { SLACK_BOT_TOKEN: '', SLACK_APP_TOKEN: '' },
+  signal: { SIGNAL_PHONE_NUMBER: '' }
 })
 
 const config = ref({
   env: {
-    OPENCLAW_HOME: '/root/.openclaw',
-    OPENCLAW_GATEWAY_PORT: '18987',
-    OPENCLAW_DISABLE_BONJOUR: 1,
+    OPENCLAW_HOME: '/root',
+    OPENCLAW_GATEWAY_PORT: '18789',
+    OPENCLAW_STATE_DIR: '/root/.openclaw',
+    OPENCLAW_DISABLE_BONJOUR: '1',
     OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS: '*'
   },
   openclaw: {
     tools: {
-      exec: { security: 'full', host: 'gateway' },
-      web: { fetch: {} }
+      exec: { backgroundMs: 10000, timeoutSec: 1800, notifyOnExit: true },
+      web: { fetch: { enabled: true } }
     },
-    gateway: { bind: 'lan', port: 18987 }
+    gateway: { bind: 'lan', port: 18789 }
   }
 })
 
@@ -527,10 +607,10 @@ const openclawJsonStr = ref('')
 
 const defaultTemplate = ref({
   tools: {
-    exec: { security: 'full', host: 'gateway' },
-    web: { fetch: {} }
+    exec: { backgroundMs: 10000, timeoutSec: 1800, notifyOnExit: true },
+    web: { fetch: { enabled: true } }
   },
-  gateway: { bind: 'lan', port: 18987 }
+  gateway: { bind: 'lan', port: 18789 }
 })
 
 const currentConfigCompare = ref({})

@@ -168,8 +168,9 @@ def create_default_configs():
             "docker_socket": "/var/run/docker.sock",
             "web_port": 8080,
             "data_root": str(data_dir),
-            "default_image": "openclaw/openclaw:latest",
-            "docker_mirror": ""
+            "default_image": "ghcr.io/openclaw/openclaw:latest",
+            "docker_mirror": "",
+            "gateway_password": ""
         }
         with open(settings_file, 'w') as f:
             json.dump(default_settings, f, indent=2)
@@ -183,40 +184,39 @@ def create_default_configs():
             "byok": {
                 "openai": {"OPENAI_API_KEY": ""},
                 "anthropic": {"ANTHROPIC_API_KEY": ""},
-                "google": {"GOOGLE_GENERATIVE_AI_API_KEY": ""},
-                "azure": {
-                    "AZURE_OPENAI_API_KEY": "",
-                    "AZURE_OPENAI_ENDPOINT": "",
-                    "AZURE_OPENAI_DEPLOYMENT": ""
-                },
+                "google": {"GEMINI_API_KEY": ""},
                 "deepseek": {"DEEPSEEK_API_KEY": ""},
                 "minimax": {"MINIMAX_API_KEY": ""},
-                "ollama": {"OLLAMA_BASE_URL": "http://localhost:11434"},
+                "ollama": {"OLLAMA_API_KEY": ""},
                 "openrouter": {"OPENROUTER_API_KEY": ""},
                 "huggingface": {"HUGGINGFACE_HUB_TOKEN": ""},
                 "groq": {"GROQ_API_KEY": ""},
                 "xai": {"XAI_API_KEY": ""},
-                "cohere": {"COHERE_API_KEY": ""},
                 "mistral": {"MISTRAL_API_KEY": ""},
-                "voyage": {"VOYAGE_API_KEY": ""}
+                "voyage": {"VOYAGE_API_KEY": ""},
+                "zai": {"ZAI_API_KEY": ""},
+                "cerebras": {"CEREBRAS_API_KEY": ""},
+                "together": {"TOGETHER_API_KEY": ""},
+                "moonshot": {"MOONSHOT_API_KEY": ""},
+                "kimi": {"KIMI_API_KEY": ""},
+                "venice": {"VENICE_API_KEY": ""},
+                "nvidia": {"NVIDIA_API_KEY": ""},
+                "synthetic": {"SYNTHETIC_API_KEY": ""},
+                "kilocode": {"KILOCODE_API_KEY": ""},
+                "ai_gateway": {"AI_GATEWAY_API_KEY": ""}
             },
             "channels": {
                 "telegram": {"TELEGRAM_BOT_TOKEN": ""},
-                "discord": {
-                    "DISCORD_BOT_TOKEN": "",
-                    "DISCORD_GUILD_ID": "",
-                    "DISCORD_USER_ID": ""
-                },
+                "discord": {"DISCORD_BOT_TOKEN": ""},
                 "feishu": {
                     "FEISHU_APP_ID": "",
                     "FEISHU_APP_SECRET": ""
                 },
-                "whatsapp": {"WHATSAPP_SESSION_PATH": "/root/.openclaw/credentials/whatsapp"},
                 "slack": {
                     "SLACK_BOT_TOKEN": "",
-                    "SLACK_TEAM_ID": ""
+                    "SLACK_APP_TOKEN": ""
                 },
-                "signal": {"SIGNAL电话号码": ""}
+                "signal": {"SIGNAL_PHONE_NUMBER": ""}
             }
         }
         with open(templates_file, 'w') as f:

@@ -21,7 +21,8 @@ class ConfigManager:
                 "docker_socket": "/var/run/docker.sock",
                 "web_port": 8080,
                 "data_root": self.data_dir,
-                "default_image": "openclaw/openclaw:latest"
+                "default_image": "ghcr.io/openclaw/openclaw:latest",
+                "gateway_password": ""
             }
             with open(self.settings_file, "w") as f:
                 json.dump(default_settings, f, indent=2)
@@ -37,12 +38,7 @@ class ConfigManager:
                         "ANTHROPIC_API_KEY": ""
                     },
                     "google": {
-                        "GOOGLE_GENERATIVE_AI_API_KEY": ""
-                    },
-                    "azure": {
-                        "AZURE_OPENAI_API_KEY": "",
-                        "AZURE_OPENAI_ENDPOINT": "",
-                        "AZURE_OPENAI_DEPLOYMENT": ""
+                        "GEMINI_API_KEY": ""
                     },
                     "deepseek": {
                         "DEEPSEEK_API_KEY": ""
@@ -51,7 +47,7 @@ class ConfigManager:
                         "MINIMAX_API_KEY": ""
                     },
                     "ollama": {
-                        "OLLAMA_BASE_URL": "http://localhost:11434"
+                        "OLLAMA_API_KEY": ""
                     },
                     "openrouter": {
                         "OPENROUTER_API_KEY": ""
@@ -65,14 +61,41 @@ class ConfigManager:
                     "xai": {
                         "XAI_API_KEY": ""
                     },
-                    "cohere": {
-                        "COHERE_API_KEY": ""
-                    },
                     "mistral": {
                         "MISTRAL_API_KEY": ""
                     },
                     "voyage": {
                         "VOYAGE_API_KEY": ""
+                    },
+                    "zai": {
+                        "ZAI_API_KEY": ""
+                    },
+                    "cerebras": {
+                        "CEREBRAS_API_KEY": ""
+                    },
+                    "together": {
+                        "TOGETHER_API_KEY": ""
+                    },
+                    "moonshot": {
+                        "MOONSHOT_API_KEY": ""
+                    },
+                    "kimi": {
+                        "KIMI_API_KEY": ""
+                    },
+                    "venice": {
+                        "VENICE_API_KEY": ""
+                    },
+                    "nvidia": {
+                        "NVIDIA_API_KEY": ""
+                    },
+                    "synthetic": {
+                        "SYNTHETIC_API_KEY": ""
+                    },
+                    "kilocode": {
+                        "KILOCODE_API_KEY": ""
+                    },
+                    "ai_gateway": {
+                        "AI_GATEWAY_API_KEY": ""
                     }
                 },
                 "channels": {
@@ -80,46 +103,18 @@ class ConfigManager:
                         "TELEGRAM_BOT_TOKEN": ""
                     },
                     "discord": {
-                        "DISCORD_BOT_TOKEN": "",
-                        "DISCORD_GUILD_ID": "",
-                        "DISCORD_USER_ID": ""
+                        "DISCORD_BOT_TOKEN": ""
                     },
                     "feishu": {
                         "FEISHU_APP_ID": "",
                         "FEISHU_APP_SECRET": ""
                     },
-                    "whatsapp": {
-                        "WHATSAPP_SESSION_PATH": "/root/.openclaw/credentials/whatsapp"
-                    },
                     "slack": {
                         "SLACK_BOT_TOKEN": "",
-                        "SLACK_TEAM_ID": ""
+                        "SLACK_APP_TOKEN": ""
                     },
                     "signal": {
-                        "SIGNAL电话号码": ""
-                    }
-                },
-                "other_llm": {
-                    "google": {
-                        "GOOGLE_GENERATIVE_AI_API_KEY": ""
-                    },
-                    "huggingface": {
-                        "HUGGINGFACE_HUB_TOKEN": ""
-                    },
-                    "groq": {
-                        "GROQ_API_KEY": ""
-                    },
-                    "xai": {
-                        "XAI_API_KEY": ""
-                    },
-                    "cohere": {
-                        "COHERE_API_KEY": ""
-                    },
-                    "mistral": {
-                        "MISTRAL_API_KEY": ""
-                    },
-                    "voyage": {
-                        "VOYAGE_API_KEY": ""
+                        "SIGNAL_PHONE_NUMBER": ""
                     }
                 }
             }
@@ -156,7 +151,7 @@ class ConfigManager:
         with open(self.templates_file, "w") as f:
             json.dump(templates, f, indent=2)
     
-    def create_default_config(self, instance_dir: str, gateway_port: int = 18987):
+    def create_default_config(self, instance_dir: str, gateway_port: int = 18789):
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         os.makedirs(openclaw_dir, exist_ok=True)
         
@@ -185,61 +180,101 @@ class ConfigManager:
         logs_dir = os.path.join(openclaw_dir, "logs")
         os.makedirs(logs_dir, exist_ok=True)
     
-    def _get_default_env(self, gateway_port: int = 18987) -> dict:
+    def _get_default_env(self, gateway_port: int = 18789) -> dict:
+        """Get default .env content using official OpenClaw environment variable names.
+        
+        Official env var reference: https://docs.openclaw.ai/help/environment
+        Official provider list: https://docs.openclaw.ai/concepts/model-providers
+        Official .env.example: https://github.com/openclaw/openclaw/blob/main/.env.example
+        
+        NOTE: All instances run as root inside Docker containers.
+        Home directory is /root, config dir is /root/.openclaw.
+        """
         return {
+            # --- Gateway / paths (root user in Docker) ---
+            "HOME": "/root",
             "OPENCLAW_HOME": "/root",
-            "OPENCLAW_DATA_DIR": "/root/.openclaw",
+            "OPENCLAW_STATE_DIR": "/root/.openclaw",
+            "OPENCLAW_CONFIG_DIR": "/root/.openclaw",
+            "OPENCLAW_WORKSPACE_DIR": "/root/.openclaw/workspace",
             "OPENCLAW_GATEWAY_PORT": str(gateway_port),
+            "OPENCLAW_GATEWAY_BIND": "lan",
             "OPENCLAW_DISABLE_BONJOUR": "1",
             "OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS": "*",
+            # --- Gateway auth (password mode, global setting) ---
+            "OPENCLAW_GATEWAY_PASSWORD": "",
+            # --- Web search (Brave Search, group-level API key) ---
+            "BRAVE_API_KEY": "",
+            # --- Model provider API keys (official names) ---
+            # Precedence: OPENCLAW_LIVE_<PROVIDER>_KEY > <PROVIDER>_API_KEYS > <PROVIDER>_API_KEY
             "OPENAI_API_KEY": "",
-            "GOOGLE_GENERATIVE_AI_API_KEY": "",
             "ANTHROPIC_API_KEY": "",
+            "GEMINI_API_KEY": "",
+            "OPENROUTER_API_KEY": "",
             "DEEPSEEK_API_KEY": "",
             "MINIMAX_API_KEY": "",
-            "VOYAGE_API_KEY": "",
             "MISTRAL_API_KEY": "",
-            "AZURE_OPENAI_API_KEY": "",
-            "AZURE_OPENAI_ENDPOINT": "",
-            "AZURE_OPENAI_DEPLOYMENT": ""
+            "GROQ_API_KEY": "",
+            "XAI_API_KEY": "",
+            "HUGGINGFACE_HUB_TOKEN": "",
+            "VOYAGE_API_KEY": "",
+            "ZAI_API_KEY": "",
+            "CEREBRAS_API_KEY": "",
+            "TOGETHER_API_KEY": "",
+            "MOONSHOT_API_KEY": "",
+            "KIMI_API_KEY": "",
+            "VENICE_API_KEY": "",
+            "NVIDIA_API_KEY": "",
+            "SYNTHETIC_API_KEY": "",
+            "KILOCODE_API_KEY": "",
+            "AI_GATEWAY_API_KEY": "",
+            "OLLAMA_API_KEY": "",
         }
     
-    def _get_default_openclaw_config(self, gateway_port: int = 18987) -> dict:
+    def _get_default_openclaw_config(self, gateway_port: int = 18789) -> dict:
         """Get the latest default openclaw.json configuration based on OpenClaw official schema.
         
+        Official reference: https://docs.openclaw.ai/gateway/configuration-reference
+        
         IMPORTANT: This configuration follows strict OpenClaw 2026.3.2 specification.
-        DO NOT add fields that are not in the official schema, or the instance will fail to start.
+        The gateway validates config strictly — unrecognized keys prevent boot.
+        Run `openclaw doctor` to diagnose config issues.
         
         Forbidden fields (will cause startup failure):
         - agents.defaults.tools
         - tools.file
         - tools.webFetch
-        - tools.exec.host/security (wrong location)
+        - tools.exec.host / tools.exec.security (wrong location/keys)
         
-        Valid configuration sections:
-        - Meta information
-        - Wizard configuration
-        - Authentication profiles
-        - Model providers
-        - Agent defaults (model, models, workspace ONLY)
-        - Tools configuration (profile, web.search/fetch, agentToAgent ONLY)
-        - Commands settings
-        - Session management
-        - Hooks configuration
-        - Channels (Telegram, Feishu)
-        - Gateway settings with proper CORS
-        - Skills configuration
-        - Plugins management
+        Valid top-level sections:
+        - env, meta, wizard, auth, models, agents, tools, commands,
+          session, hooks, channels, gateway, skills, plugins
+        
+        Design decisions for OpenOpenClaw Docker deployment:
+        - All instances run as ROOT user inside Docker containers
+        - Home directory: /root, config dir: /root/.openclaw
+        - Full LLM tool capabilities enabled (file r/w, exec, web search, web fetch)
+        - Brave Search enabled by default (reads BRAVE_API_KEY from env)
+        - Gateway bound to LAN (0.0.0.0) with password auth
+        - Password read from OPENCLAW_GATEWAY_PASSWORD env var (global setting)
+        - Wizard section pre-populated so onboarding is skipped
         """
         import datetime
         now = datetime.datetime.utcnow().isoformat() + "Z"
         
         return {
+            "env": {
+                # Config-level env vars (lowest precedence, never override process/dotenv).
+                # Ref: https://docs.openclaw.ai/gateway/configuration-reference#env-inline-env-vars
+                # Group-level keys are injected here via env var substitution ${VAR_NAME}.
+            },
             "meta": {
                 "lastTouchedVersion": "2026.3.2",
                 "lastTouchedAt": now
             },
             "wizard": {
+                # Pre-populated to skip onboarding wizard (openclaw onboard).
+                # Ref: https://docs.openclaw.ai/gateway/configuration-reference#wizard
                 "lastRunAt": now,
                 "lastRunVersion": "2026.3.2",
                 "lastRunCommand": "configure",
@@ -258,26 +293,52 @@ class ConfigManager:
                         "primary": ""
                     },
                     "models": {},
+                    # Root user home: /root/.openclaw/workspace
                     "workspace": "/root/.openclaw/workspace"
-                    # NOTE: Do NOT add "tools" here - it's not allowed in agents.defaults
+                    # NOTE: Do NOT add "tools" here — illegal in agents.defaults
                 }
             },
             "tools": {
+                # "full" profile: enables ALL tool groups —
+                # group:fs (read/write/edit/apply_patch), group:runtime (exec/process/bash),
+                # group:web (web_search/web_fetch), group:sessions, group:memory,
+                # group:ui, group:automation, group:messaging, group:nodes
+                # Ref: https://docs.openclaw.ai/tools#tool-profiles
                 "profile": "full",
                 "web": {
                     "search": {
+                        # Brave Search enabled by default.
+                        # API key read from BRAVE_API_KEY env var (set at group level).
+                        # Ref: https://docs.openclaw.ai/gateway/configuration-reference#tools-web
                         "enabled": True,
-                        "apiKey": ""
+                        "maxResults": 5,
+                        "timeoutSeconds": 30,
+                        "cacheTtlMinutes": 15
                     },
                     "fetch": {
-                        "enabled": True
+                        # Web fetch for internet access.
+                        "enabled": True,
+                        "maxChars": 50000,
+                        "maxCharsCap": 50000,
+                        "timeoutSeconds": 30,
+                        "cacheTtlMinutes": 15
                     }
                 },
                 "agentToAgent": {
                     "enabled": True
+                },
+                "exec": {
+                    # Full terminal command execution access.
+                    # Ref: https://docs.openclaw.ai/gateway/configuration-reference#tools-exec
+                    "backgroundMs": 10000,
+                    "timeoutSec": 1800,
+                    "cleanupMs": 1800000,
+                    "notifyOnExit": True,
+                    "notifyOnExitEmptySuccess": False
                 }
-                # NOTE: Do NOT add "file", "webFetch", or "exec" here
-                # These are not valid fields in OpenClaw 2026.3.2
+                # NOTE: Do NOT add "file" or "webFetch" — illegal field names.
+                # File access is provided by group:fs tools (read/write/edit/apply_patch)
+                # which are included in the "full" profile.
             },
             "commands": {
                 "native": "auto",
@@ -327,8 +388,14 @@ class ConfigManager:
             "gateway": {
                 "port": gateway_port,
                 "mode": "local",
+                # "lan" is required for Docker: loopback (default) only listens on
+                # 127.0.0.1 inside the container, unreachable via Docker bridge.
+                # Ref: https://docs.openclaw.ai/install/docker#lan-vs-loopback
                 "bind": "lan",
                 "controlUi": {
+                    "enabled": True,
+                    # allowedOrigins overridden by OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS=*
+                    # in .env for broad LAN access. Explicit list here as fallback.
                     "allowedOrigins": [
                         f"http://localhost:{gateway_port}",
                         f"http://127.0.0.1:{gateway_port}",
@@ -337,23 +404,21 @@ class ConfigManager:
                     ]
                 },
                 "auth": {
+                    # Password mode for LAN access security.
+                    # Password read from OPENCLAW_GATEWAY_PASSWORD env var.
+                    # This is a global setting managed by OpenOpenClaw system settings.
+                    # Ref: https://docs.openclaw.ai/gateway/configuration-reference#gateway
                     "mode": "password",
-                    "password": ""
+                    "rateLimit": {
+                        "maxAttempts": 10,
+                        "windowMs": 60000,
+                        "lockoutMs": 300000,
+                        "exemptLoopback": True
+                    }
                 },
                 "tailscale": {
                     "mode": "off",
                     "resetOnExit": False
-                },
-                "nodes": {
-                    "denyCommands": [
-                        "camera.snap",
-                        "camera.clip",
-                        "screen.record",
-                        "contacts.add",
-                        "calendar.add",
-                        "reminders.add",
-                        "sms.send"
-                    ]
                 }
             },
             "skills": {
@@ -422,8 +487,10 @@ class ConfigManager:
         
         This method will:
         1. Remove illegal fields that cause startup failures
-        2. Add missing required sections
-        3. Update version info
+        2. Migrate /home/node paths to /root (root user Docker deployment)
+        3. Add missing required sections
+        4. Update version info
+        5. Ensure gateway auth mode is password
         
         Args:
             config: The existing configuration dictionary
@@ -435,17 +502,20 @@ class ConfigManager:
         # Step 1: Remove illegal fields that cause startup failures
         config = self._remove_illegal_config_fields(config)
         
-        # Step 2: Ensure meta section exists
+        # Step 2: Migrate /home/node paths to /root for root user deployment
+        config = self._migrate_paths_to_root(config)
+        
+        # Step 3: Ensure meta section exists
         if "meta" not in config:
             config["meta"] = {}
         
-        # Step 3: Update version info
+        # Step 4: Update version info
         import datetime
         config["meta"]["lastTouchedVersion"] = target_version
         config["meta"]["lastTouchedAt"] = datetime.datetime.utcnow().isoformat() + "Z"
         
-        # Step 4: Ensure all required sections exist with defaults
-        default_config = self._get_default_openclaw_config(config.get("gateway", {}).get("port", 18987))
+        # Step 5: Ensure all required sections exist with defaults
+        default_config = self._get_default_openclaw_config(config.get("gateway", {}).get("port", 18789))
         
         for key in default_config:
             if key not in config:
@@ -454,6 +524,22 @@ class ConfigManager:
                 # Deep merge for nested dicts
                 self._deep_merge(config[key], default_config[key])
         
+        # Step 6: Ensure gateway auth is password mode
+        if "gateway" in config and isinstance(config["gateway"], dict):
+            if "auth" not in config["gateway"]:
+                config["gateway"]["auth"] = {}
+            if config["gateway"]["auth"].get("mode") == "none":
+                config["gateway"]["auth"]["mode"] = "password"
+        
+        return config
+    
+    def _migrate_paths_to_root(self, config: dict) -> dict:
+        """Migrate all /home/node paths to /root for root user Docker deployment."""
+        if "agents" in config and isinstance(config["agents"], dict):
+            if "defaults" in config["agents"] and isinstance(config["agents"]["defaults"], dict):
+                workspace = config["agents"]["defaults"].get("workspace", "")
+                if isinstance(workspace, str) and "/home/node" in workspace:
+                    config["agents"]["defaults"]["workspace"] = workspace.replace("/home/node", "/root")
         return config
     
     def _remove_illegal_config_fields(self, config: dict) -> dict:
@@ -478,11 +564,16 @@ class ConfigManager:
                 if field in config["tools"]:
                     del config["tools"][field]
             
-            # Remove tools.exec if it has host/security (these belong elsewhere)
+            # Remove tools.exec if it has illegal host/security fields (but keep the section if valid)
             if "exec" in config["tools"] and isinstance(config["tools"]["exec"], dict):
-                # exec with host/security is wrong location, remove it
-                if "host" in config["tools"]["exec"] or "security" in config["tools"]["exec"]:
-                    del config["tools"]["exec"]
+                # host/security are not valid in OpenClaw 2026.3.2, remove them specifically
+                illegal_exec_subfields = ["host", "security"]
+                for subfield in illegal_exec_subfields:
+                    if subfield in config["tools"]["exec"]:
+                        del config["tools"]["exec"][subfield]
+                
+                # If exec is now empty, we can keep it or let migration add valid defaults
+                # But we definitely shouldn't delete the whole 'exec' key if it's a valid section location
         
         return config
     
@@ -509,8 +600,11 @@ class ConfigManager:
                 errors.append("tools.file: Illegal field, use tools.fileEdit or remove")
             if "webFetch" in config["tools"]:
                 errors.append("tools.webFetch: Illegal field, use tools.web.fetch instead")
-            if "exec" in config["tools"]:
-                errors.append("tools.exec: Wrong location, move to top-level or remove")
+            
+            # exec is valid in tools, but its subfields might be wrong
+            if "exec" in config["tools"] and isinstance(config["tools"]["exec"], dict):
+                if "host" in config["tools"]["exec"] or "security" in config["tools"]["exec"]:
+                    errors.append("tools.exec: Fields 'host' and 'security' are no longer supported. Use official fields like 'backgroundMs'.")
         
         # Check required sections
         required_sections = ["meta", "gateway", "agents", "tools"]
@@ -522,6 +616,20 @@ class ConfigManager:
         if "gateway" in config:
             if "port" not in config["gateway"]:
                 warnings.append("gateway.port: Not specified, will use default")
+            # Check gateway auth mode
+            auth_mode = config.get("gateway", {}).get("auth", {}).get("mode", "")
+            if auth_mode == "none":
+                warnings.append("gateway.auth.mode: 'none' is insecure for LAN-bound gateway. Use 'password' instead.")
+        
+        # Check for legacy /home/node paths (should be /root)
+        workspace = config.get("agents", {}).get("defaults", {}).get("workspace", "")
+        if isinstance(workspace, str) and "/home/node" in workspace:
+            warnings.append("agents.defaults.workspace: Contains /home/node path. Should be /root for root user deployment.")
+        
+        # Check tools profile
+        tools_profile = config.get("tools", {}).get("profile", "")
+        if tools_profile and tools_profile != "full":
+            warnings.append(f"tools.profile: '{tools_profile}' does not provide full LLM capabilities. Use 'full' for complete access.")
         
         return {
             "valid": len(errors) == 0,
@@ -578,8 +686,7 @@ class ConfigManager:
                     f"http://localhost:{gateway_port}",
                     f"http://127.0.0.1:{gateway_port}",
                     f"http://localhost:{host_port}",
-                    f"http://127.0.0.1:{host_port}",
-                    f"http://192.168.13.13:{host_port}"
+                    f"http://127.0.0.1:{host_port}"
                 ]
             
             with open(config_path, "w") as f:
@@ -754,6 +861,7 @@ class ConfigManager:
         return zip_path
     
     def import_instance(self, source_path: str, group_id: str, name: str, group_root_dir: str) -> dict:
+        from datetime import datetime
         extract_dir = os.path.join(self.data_dir, "temp", f"import_{name}_{int(datetime.now().timestamp())}")
         instance_dir = os.path.join(group_root_dir, name)
         

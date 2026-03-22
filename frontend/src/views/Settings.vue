@@ -220,8 +220,8 @@
             <span>关于</span>
           </template>
           <el-descriptions :column="1" border>
-            <el-descriptions-item label="项目名称">OpenClaw Manager</el-descriptions-item>
-            <el-descriptions-item label="项目描述">OpenClaw 多实例群组化部署管理系统</el-descriptions-item>
+            <el-descriptions-item label="项目名称">OpenOpenClaw</el-descriptions-item>
+            <el-descriptions-item label="项目描述">智启未来，重塑 AI 容器集群管理</el-descriptions-item>
             <el-descriptions-item label="技术栈">FastAPI + Vue3 + Element Plus + SQLite</el-descriptions-item>
           </el-descriptions>
         </el-card>
@@ -243,7 +243,7 @@ const settings = ref({
   docker_socket: '/var/run/docker.sock',
   web_port: 8080,
   data_root: '',
-  default_image: 'openclaw/openclaw:latest',
+  default_image: 'ghcr.io/openclaw/openclaw:latest',
   effective_data_dir: ''
 })
 
@@ -256,7 +256,7 @@ const osInfo = ref({
 const envCheck = ref(null)
 const checking = ref(false)
 const pulling = ref(false)
-const pullImageName = ref('openclaw/openclaw:latest')
+const pullImageName = ref('ghcr.io/openclaw/openclaw:latest')
 const pullResult = ref('')
 const pullSuccess = ref(false)
 const savingRegistry = ref(false)
@@ -418,7 +418,10 @@ const formatBytes = (bytes) => {
 
 const formatDate = (timestamp) => {
   if (!timestamp) return 'N/A'
-  const date = new Date(timestamp * 1000)
+  const date = typeof timestamp === 'number'
+    ? new Date(timestamp * 1000)
+    : new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return 'N/A'
   return date.toLocaleString('zh-CN')
 }
 

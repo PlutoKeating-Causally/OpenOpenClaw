@@ -15,6 +15,9 @@ tmp/
 *.zip
 *.db
 *.sqlite
+*.log
+backend/data/
+frontend/dist/
 
 # --------------------
 # Python
@@ -34,13 +37,13 @@ pip-log.txt
 .coverage
 htmlcov/
 .mypy_cache/
+.ipynb_checkpoints/
 
 # --------------------
 # Node.js / Frontend
 # --------------------
 node_modules/
 frontend/node_modules/
-frontend/dist/
 dist/
 dist-ssr/
 npm-debug.log*

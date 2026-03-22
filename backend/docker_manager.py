@@ -137,7 +137,7 @@ class DockerManager:
                 "created": container.attrs.get("Created"),
                 "state": container.attrs.get("State", {}).get("Status"),
                 "ports": container.ports,
-                " mounts": container.attrs.get("Mounts"),
+                "mounts": container.attrs.get("Mounts"),
                 "networks": list(container.attrs.get("NetworkSettings", {}).get("Networks", {}).keys())
             }
         except NotFound:
@@ -166,8 +166,17 @@ class DockerManager:
             return []
     
     def get_container_stats(self, name: str) -> dict:
+        if self.client is None:
+            return {"error": "Docker client not initialized"}
         try:
             container = self.client.containers.get(name)
+            if container.status != "running":
+                return {
+                    "cpu_percent": 0,
+                    "memory_usage": 0,
+                    "memory_limit": 0,
+                    "memory_percent": 0
+                }
             stats = container.stats(stream=False)
             
             cpu_percent = 0

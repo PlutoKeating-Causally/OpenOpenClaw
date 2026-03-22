@@ -32,7 +32,7 @@
         <el-table-column prop="group_name" label="群组" />
         <el-table-column label="端口" width="130">
           <template #default="{ row }">
-            <span>{{ row.host_port }}:{{ row.container_port || 18987 }}</span>
+            <span>{{ row.host_port }}:{{ row.container_port || 18789 }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
@@ -70,8 +70,8 @@
           <el-input v-model="form.name" placeholder="请输入实例名称" />
         </el-form-item>
         <el-form-item label="容器端口">
-          <el-input-number v-model="form.container_port" :min="1" :max="65535" placeholder="18987" />
-          <div style="color: #909399; font-size: 12px; margin-top: 4px;">OpenClaw Gateway 在容器内监听的端口，默认 18987</div>
+          <el-input-number v-model="form.container_port" :min="1" :max="65535" placeholder="18789" />
+          <div style="color: #909399; font-size: 12px; margin-top: 4px;">OpenClaw Gateway 在容器内监听的端口，默认 18789</div>
         </el-form-item>
         <el-form-item label="宿主机端口">
           <el-input-number v-model="form.host_port" :min="1" :max="65535" :placeholder="'自动分配'" />
@@ -91,7 +91,7 @@
           <el-descriptions-item label="群组">{{ selectedInstance.group_name }}</el-descriptions-item>
           <el-descriptions-item label="容器名">{{ selectedInstance.container_name }}</el-descriptions-item>
           <el-descriptions-item label="宿主机端口">{{ selectedInstance.host_port }}</el-descriptions-item>
-          <el-descriptions-item label="容器 Gateway 端口">{{ selectedInstance.container_port || 18987 }}</el-descriptions-item>
+          <el-descriptions-item label="容器 Gateway 端口">{{ selectedInstance.container_port || 18789 }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="selectedInstance.status === 'running' ? 'success' : 'info'">
               {{ selectedInstance.status }}
@@ -213,12 +213,12 @@ const instanceStats = ref({})
 const form = ref({
   group_id: '',
   name: '',
-  container_port: 18987,
+  container_port: 18789,
   host_port: null
 })
 
 const editHostPort = ref(0)
-const editContainerPort = ref(18987)
+const editContainerPort = ref(18789)
 
 const rules = {
   group_id: [{ required: true, message: '请选择群组', trigger: 'change' }],
@@ -256,7 +256,7 @@ const showCreateDialog = () => {
   form.value = {
     group_id: filterGroup.value || (groups.value[0]?.id || ''),
     name: '',
-    container_port: 18987,
+    container_port: 18789,
     host_port: null
   }
   dialogVisible.value = true
@@ -363,7 +363,7 @@ const viewInstance = async (row) => {
     const data = await instanceApi.getById(row.id)
     selectedInstance.value = data
     editHostPort.value = data.host_port
-    editContainerPort.value = data.container_port || 18987
+    editContainerPort.value = data.container_port || 18789
     drawerVisible.value = true
     refreshStats()
   } catch (error) {

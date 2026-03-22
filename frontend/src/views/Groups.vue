@@ -115,8 +115,8 @@ const form = ref({
   name: '',
   root_dir: '',
   docker_network: '',
-  port_range_start: 18980,
-  port_range_end: 18990,
+  port_range_start: 18790,
+  port_range_end: 18800,
   description: ''
 })
 

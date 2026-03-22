@@ -20,7 +20,8 @@ Invalid config at /root/.openclaw/openclaw.json:
 | `agents.defaults.tools` | agents.defaults | ❌ 该位置不允许 tools 字段 |
 | `tools.file` | tools | ❌ 字段名错误 |
 | `tools.webFetch` | tools | ❌ 字段名错误，应为 `tools.web.fetch` |
-| `tools.exec` | tools | ❌ 位置错误，exec 配置应在其他位置 |
+| `tools.exec.host` | tools.exec | ❌ 字段名错误，不再支持 host/security 字段 |
+| `tools.exec.security` | tools.exec | ❌ 字段名错误，不再支持 host/security 字段 |
 
 ## 解决方案
 
@@ -30,7 +31,7 @@ Invalid config at /root/.openclaw/openclaw.json:
 2. 进入「实例管理」
 3. 找到报错的实例，点击「详情」
 4. 点击「修复配置」按钮
-5. 系统自动移除非法字段并添加缺失的配置段
+5. 系统自动移除非法字段并添加缺失的配置段，同时将工作区路径修正为 `/root/.openclaw/workspace`。
 
 ### 方案 2：使用 API 修复
 
@@ -44,12 +45,13 @@ curl -X POST http://localhost:8080/api/instances/{instance_id}/config/fix
 
 ### 方案 3：手动修复
 
-编辑 `openclaw.json` 文件，删除以下字段：
+编辑 `openclaw.json` 文件，删除以下字段并将路径修正：
 
 ```json
 {
   "agents": {
     "defaults": {
+      "workspace": "/root/.openclaw/workspace",
       // 删除这一行
       "tools": { "execAllowed": true, ... }
     }
@@ -78,11 +80,34 @@ curl -X POST http://localhost:8080/api/instances/{instance_id}/config/fix
   "tools": {
     "profile": "full",
     "web": {
-      "search": { "enabled": true, "apiKey": "" },
-      "fetch": { "enabled": true }
+      "search": {
+        "enabled": true,
+        "maxResults": 5,
+        "timeoutSeconds": 30,
+        "cacheTtlMinutes": 15
+      },
+      "fetch": {
+        "enabled": true,
+        "maxChars": 50000,
+        "maxCharsCap": 50000,
+        "timeoutSeconds": 30,
+        "cacheTtlMinutes": 15
+      }
     },
-    "agentToAgent": { "enabled": true }
-    // ❌ 不要添加 file, webFetch, exec
+    "exec": {
+      "backgroundMs": 10000,
+      "timeoutSec": 1800,
+      "cleanupMs": 1800000,
+      "notifyOnExit": true,
+      "notifyOnExitEmptySuccess": false
+    }
+    // ❌ 不要添加 file, webFetch, host, security 字段
+  },
+  "gateway": {
+    "bind": "lan",
+    "auth": {
+      "mode": "password"
+    }
   }
 }
 ```
@@ -120,7 +145,12 @@ curl http://localhost:8080/api/instances/{instance_id}/config/validate
 
 3. **配置修复** (`migrate_config_to_latest`)
    - 自动移除非法字段
+   - 迁移 /home/node 路径到 /root
    - 添加缺失的必需配置段
+   - 确保 gateway auth 为 password 模式
+
+4. **路径迁移** (`_migrate_paths_to_root`)
+   - 将旧的 /home/node 路径自动迁移为 /root
 
 4. **非法字段清理** (`_remove_illegal_config_fields`)
    - 清理已知的非法字段
@@ -137,7 +167,7 @@ curl http://localhost:8080/api/instances/{instance_id}/config/validate
 运行测试脚本验证修复效果：
 
 ```bash
-cd /Users/causally/OpenOpenclaw
+cd /home/pluto/OpenOpenClaw
 python3 test_setup.py
 ```
 

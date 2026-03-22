@@ -1,17 +1,19 @@
-# OpenClaw Manager 快速入门指南
+# OpenOpenClaw 快速上手指南
 
-一份详细的上手指南，帮助你快速部署和使用 OpenClaw Manager 多实例管理系统。
+**OpenOpenClaw**：全方位多实例集群管理系统，引领 AI 容器化运维新高度。
+
+本指南将引领您完成 OpenOpenClaw 的极致部署与高效运维流程，助您快速搭建并掌控一套高性能的 AI 实例集群。
 
 ---
 
 ## 目录
 
-1. [环境配置](#1-环境配置)
-2. [安装部署](#2-安装部署)
-3. [快速开始](#3-快速开始)
-4. [功能详解](#4-功能详解)
-5. [配置说明](#5-配置说明)
-6. [常见问题](#6-常见问题)
+1. [环境生态配置](#1-环境配置)
+2. [安装与架构部署](#2-安装部署)
+3. [三分钟快速起航](#3-快速开始)
+4. [核心功能矩阵](#4-功能详解)
+5. [配置艺术与规范](#5-配置说明)
+6. [专家级疑难解答](#6-常见问题)
 
 ---
 
@@ -173,7 +175,7 @@ npm --version
 ```bash
 # 克隆项目
 git clone <项目仓库地址>
-cd Project.OpenOpenClaw
+cd OpenOpenClaw
 
 # 查看项目结构
 ls -la
@@ -182,12 +184,14 @@ ls -la
 项目结构：
 
 ```
-Project.OpenOpenClaw/
+OpenOpenClaw/
 ├── backend/               # 后端代码
 │   ├── main.py           # FastAPI 主入口
 │   ├── models.py         # 数据库模型
 │   ├── docker_manager.py # Docker 操作封装
 │   ├── config_manager.py # 配置管理
+│   ├── init.py           # 初始化脚本
+│   ├── test_setup.py     # 功能测试脚本
 │   └── requirements.txt  # Python 依赖
 ├── frontend/             # 前端代码
 │   ├── src/             # Vue 源码
@@ -268,10 +272,10 @@ python3 main.py
 ### 2.6 验证服务
 
 ```bash
-# 检查服务是否启动
-curl http://localhost:8080/
+# 检查 API 状态 (若前端已构建，根路径将返回 HTML，API 路径始终返回 JSON)
+curl http://localhost:8080/api/system/stats
 
-# 预期输出：{"message":"OpenClaw Manager API","version":"1.0.0"}
+# 预期响应：{"total_instances":0,"total_groups":0}
 
 # 访问 Web UI
 # 打开浏览器：http://localhost:8080
@@ -299,8 +303,8 @@ curl http://localhost:8080/
 | 群组名称 | `dev-team` | 便于识别的名称 |
 | 根目录 | `groups/dev-team` | 实例数据存储路径 (相对于数据目录) |
 | Docker 网络 | `openclaw_network_dev` | 容器网络名称 |
-| 端口范围起始 | `18980` | 可用端口起始值 |
-| 端口范围结束 | `18990` | 可用端口结束值 |
+| 端口范围起始 | `18790` | 可用端口起始值 |
+| 端口范围结束 | `18800` | 可用端口结束值 |
 | 描述 | `开发团队专用` | 可选描述 |
 
 4. 点击 **确定**
@@ -419,8 +423,9 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | OPENAI_API_KEY | OpenAI API 密钥 | sk-xxx |
 | ANTHROPIC_API_KEY | Anthropic API 密钥 | sk-ant-xxx |
 | DEEPSEEK_API_KEY | DeepSeek API 密钥 | sk-xxx |
-| AZURE_OPENAI_* | Azure OpenAI 配置 | - |
-| OLLAMA_BASE_URL | Ollama 本地地址 | http://localhost:11434 |
+| GEMINI_API_KEY | Gemini API 密钥 | xxx |
+| OPENROUTER_API_KEY | OpenRouter API 密钥 | sk-or-xxx |
+| OLLAMA_API_KEY | Ollama 访问密钥 | - |
 
 #### 4.4.2 openclaw.json
 
@@ -430,19 +435,19 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 {
   "tools": {
     "exec": {
-      "security": "full",    // full/policies/local
-      "host": "host"        // host/container
+      "backgroundMs": 10000,
+      "timeoutSec": 1800,
+      "notifyOnExit": true
     },
-    "file": {
-      "allowedDirectories": ["/root"]
-    },
-    "webFetch": {
-      "enabled": true
+    "web": {
+      "fetch": {
+        "enabled": true
+      }
     }
   },
   "gateway": {
-    "bind": "0.0.0.0",
-    "port": 18987
+    "bind": "lan",
+    "port": 18789
   }
 }
 ```

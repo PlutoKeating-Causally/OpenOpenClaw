@@ -12,6 +12,9 @@ import shutil
 from pathlib import Path
 import subprocess
 import contextlib
+import platform
+import socket
+import sys
 
 from models import Group, Instance, SessionLocal, init_db, engine, Base
 from docker_manager import DockerManager
@@ -36,7 +39,7 @@ async def lifespan(app: FastAPI):
     
     yield
 
-app = FastAPI(title="OpenClaw Manager API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="OpenOpenClaw API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,10 +61,18 @@ config_mgr = ConfigManager()
 
 # --- Utils ---
 
+DEFAULT_OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:latest"
+LEGACY_OPENCLAW_IMAGES = {
+    "openclaw/openclaw",
+    "openclaw/openclaw:latest",
+}
+
 def get_effective_image(image: str = None) -> str:
     settings = config_mgr.get_settings()
-    default_image = settings.get("default_image", "openclaw/openclaw:latest")
+    default_image = settings.get("default_image", DEFAULT_OPENCLAW_IMAGE)
     img = image or default_image
+    if img in LEGACY_OPENCLAW_IMAGES:
+        img = DEFAULT_OPENCLAW_IMAGE
     
     mirror = settings.get("docker_mirror", "") or settings.get("docker_registry", "")
     if not mirror:
@@ -76,6 +87,44 @@ def get_effective_image(image: str = None) -> str:
         return img
     
     return f"{mirror_host}/{img}"
+
+def get_directory_size(path: str) -> int:
+    total_size = 0
+    if not os.path.exists(path):
+        return total_size
+
+    for root, _, files in os.walk(path):
+        for file_name in files:
+            file_path = os.path.join(root, file_name)
+            try:
+                if not os.path.islink(file_path):
+                    total_size += os.path.getsize(file_path)
+            except OSError:
+                continue
+    return total_size
+
+def require_group(db: Session, group_id: str) -> Group:
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+def require_instance(db: Session, instance_id: str) -> Instance:
+    inst = db.query(Instance).filter(Instance.id == instance_id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return inst
+
+def validate_instance_port_assignment(db: Session, group: Group, instance_id: Optional[str], host_port: int):
+    if host_port < group.port_range_start or host_port > group.port_range_end:
+        raise HTTPException(status_code=400, detail="Host port is outside group port range")
+
+    query = db.query(Instance).filter(Instance.group_id == group.id, Instance.host_port == host_port)
+    if instance_id:
+        query = query.filter(Instance.id != instance_id)
+
+    if query.first():
+        raise HTTPException(status_code=400, detail="Port in use")
 
 # --- Models ---
 
@@ -96,7 +145,7 @@ class GroupUpdate(BaseModel):
 class InstanceCreate(BaseModel):
     group_id: str
     name: str
-    container_port: Optional[int] = 18987
+    container_port: Optional[int] = 18789
     host_port: Optional[int] = None
 
 class ConfigUpdate(BaseModel):
@@ -113,12 +162,53 @@ class DirectoryImport(BaseModel):
     name: Optional[str] = None
 
 def propagate_host_env(environment: dict) -> dict:
-    """Propagate key AI API keys from host environment to container if not already set."""
+    """Propagate AI API keys from host environment to container if not already set.
+    
+    Uses official OpenClaw env var names.
+    Ref: https://docs.openclaw.ai/concepts/model-providers
+    Ref: https://github.com/openclaw/openclaw/blob/main/.env.example
+    """
     keys_to_check = [
-        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT",
-        "OPENAI_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY", "MISTRAL_API_KEY",
-        "AZURE_OPENAI_MODEL_NAME", "GOOGLE_GENERATIVE_AI_API_KEY", "ANTHROPIC_API_KEY",
-        "DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "GROQ_API_KEY"
+        # --- Model provider API keys (official OpenClaw names) ---
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "MINIMAX_API_KEY",
+        "MISTRAL_API_KEY",
+        "GROQ_API_KEY",
+        "XAI_API_KEY",
+        "HUGGINGFACE_HUB_TOKEN",
+        "VOYAGE_API_KEY",
+        "ZAI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "TOGETHER_API_KEY",
+        "MOONSHOT_API_KEY",
+        "KIMI_API_KEY",
+        "OLLAMA_API_KEY",
+        "VENICE_API_KEY",
+        "NVIDIA_API_KEY",
+        "SYNTHETIC_API_KEY",
+        "KILOCODE_API_KEY",
+        "AI_GATEWAY_API_KEY",
+        # --- Key rotation / multi-key support ---
+        "OPENAI_API_KEYS",
+        "ANTHROPIC_API_KEYS",
+        "GEMINI_API_KEYS",
+        "GOOGLE_API_KEY",
+        # --- Gateway auth ---
+        "OPENCLAW_GATEWAY_TOKEN",
+        "OPENCLAW_GATEWAY_PASSWORD",
+        # --- Channel tokens ---
+        "TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        # --- Tools ---
+        "BRAVE_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "FIRECRAWL_API_KEY",
     ]
     for key in keys_to_check:
         if key not in environment or not environment[key]:
@@ -134,7 +224,7 @@ def root():
     static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist", "index.html")
     if os.path.exists(static_dir):
         return FileResponse(static_dir)
-    return {"message": "OpenClaw Manager API", "version": "1.0.0"}
+    return {"message": "OpenOpenClaw API", "version": "1.0.0"}
 
 # --- Group Routes ---
 
@@ -175,17 +265,18 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
 
 @app.get("/api/groups/{group_id}")
 def get_group(group_id: str, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, group_id)
     
     instances = db.query(Instance).filter(Instance.group_id == group_id).all()
     return {
         "id": group.id, "name": group.name, "root_dir": group.root_dir,
         "docker_network": group.docker_network, "port_range_start": group.port_range_start,
         "port_range_end": group.port_range_end, "description": group.description,
+        "created_at": group.created_at.isoformat() if group.created_at else None,
+        "storage_used": get_directory_size(group.root_dir),
         "instances": [{"id": i.id, "name": i.name, "status": i.status, 
-                        "host_port": i.host_port, "container_port": i.container_port or 18987} 
+                        "host_port": i.host_port, "container_port": i.container_port or 18789,
+                        "created_at": i.created_at.isoformat() if i.created_at else None} 
                        for i in instances]
     }
 
@@ -255,15 +346,14 @@ def get_instances(group_id: Optional[str] = None, db: Session = Depends(get_db))
         result.append({
             "id": inst.id, "group_id": inst.group_id, "group_name": group.name if group else "Unknown",
             "name": inst.name, "container_name": inst.container_name, "host_port": inst.host_port,
+            "container_port": inst.container_port or 18789,
             "status": container_status, "created_at": inst.created_at.isoformat() if inst.created_at else None
         })
     return result
 
 @app.post("/api/instances")
 def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == instance.group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, instance.group_id)
     
     existing = db.query(Instance).filter(Instance.name == instance.name).first()
     if existing:
@@ -271,6 +361,7 @@ def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
     
     used_ports = [i.host_port for i in db.query(Instance).filter(Instance.group_id == instance.group_id).all()]
     if instance.host_port:
+        validate_instance_port_assignment(db, group, None, instance.host_port)
         if instance.host_port in used_ports:
             raise HTTPException(status_code=400, detail="Port in use")
         assigned_port = instance.host_port
@@ -284,7 +375,7 @@ def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
     if not assigned_port:
         raise HTTPException(status_code=400, detail="No ports available")
     
-    container_port = instance.container_port or 18987
+    container_port = instance.container_port or 18789
     container_name = f"openclaw-{instance.name.lower().replace(' ', '-')}-{assigned_port}"
     
     db_instance = Instance(
@@ -334,14 +425,25 @@ def batch_start_instances(instance_ids: List[str], db: Session = Depends(get_db)
                 # 3. Propagate selected Host keys
                 environment = propagate_host_env(environment)
                 
-                # 4. Enforce essential container paths
+                # 4. Enforce essential container paths for root user in Docker
+                # Ref: https://docs.openclaw.ai/help/environment
+                environment["HOME"] = "/root"
                 environment["OPENCLAW_HOME"] = "/root"
-                environment["OPENCLAW_DATA_DIR"] = "/root/.openclaw"
+                environment["OPENCLAW_STATE_DIR"] = "/root/.openclaw"
+                environment["OPENCLAW_CONFIG_DIR"] = "/root/.openclaw"
+                environment["OPENCLAW_WORKSPACE_DIR"] = "/root/.openclaw/workspace"
+                environment["OPENCLAW_GATEWAY_BIND"] = "lan"
+                
+                # 5. Inject global gateway password from system settings
+                settings = config_mgr.get_settings()
+                global_password = settings.get("gateway_password", "")
+                if global_password and not environment.get("OPENCLAW_GATEWAY_PASSWORD"):
+                    environment["OPENCLAW_GATEWAY_PASSWORD"] = global_password
                 
                 docker_mgr.run_container(
                     name=inst.container_name,
                     network=group.docker_network,
-                    ports={f"{inst.container_port or 18987}/tcp": inst.host_port},
+                    ports={f"{inst.container_port or 18789}/tcp": inst.host_port},
                     volumes={
                         instance_dir: {"bind": "/root", "mode": "rw"}
                     },
@@ -395,18 +497,58 @@ def batch_delete_instances(instance_ids: List[str], db: Session = Depends(get_db
 def start_all_instances(db: Session = Depends(get_db)):
     instances = db.query(Instance).all()
     results = []
+    effective_image = get_effective_image()
     for inst in instances:
         if inst.status != "running":
-            # Logic similar to batch_start...
-            pass
-    return {"message": "Started all (limited implementation)"}
+            group = db.query(Group).filter(Group.id == inst.group_id).first()
+            if not group:
+                continue
+            try:
+                instance_dir = os.path.join(group.root_dir, inst.name)
+                openclaw_dir = os.path.join(instance_dir, ".openclaw")
+                
+                group_env_path = os.path.join(group.root_dir, ".env")
+                environment = docker_mgr.load_env_file(group_env_path)
+                
+                inst_env_path = os.path.join(openclaw_dir, ".env")
+                environment.update(docker_mgr.load_env_file(inst_env_path))
+                
+                environment = propagate_host_env(environment)
+                
+                environment["HOME"] = "/root"
+                environment["OPENCLAW_HOME"] = "/root"
+                environment["OPENCLAW_STATE_DIR"] = "/root/.openclaw"
+                environment["OPENCLAW_CONFIG_DIR"] = "/root/.openclaw"
+                environment["OPENCLAW_WORKSPACE_DIR"] = "/root/.openclaw/workspace"
+                environment["OPENCLAW_GATEWAY_BIND"] = "lan"
+                
+                settings = config_mgr.get_settings()
+                global_password = settings.get("gateway_password", "")
+                if global_password and not environment.get("OPENCLAW_GATEWAY_PASSWORD"):
+                    environment["OPENCLAW_GATEWAY_PASSWORD"] = global_password
+                
+                docker_mgr.run_container(
+                    name=inst.container_name,
+                    network=group.docker_network,
+                    ports={f"{inst.container_port or 18789}/tcp": inst.host_port},
+                    volumes={
+                        instance_dir: {"bind": "/root", "mode": "rw"}
+                    },
+                    environment=environment,
+                    image=effective_image
+                )
+                inst.status = "running"
+                results.append({"id": inst.id, "status": "success"})
+            except:
+                results.append({"id": inst.id, "status": "failed"})
+    db.commit()
+    return {"results": results}
 
 # --- Import/Migration ---
 
 @app.post("/api/instances/import-directory")
 def import_instances_from_directory(data: DirectoryImport, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == data.group_id).first()
-    if not group: raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, data.group_id)
     
     source_path = data.source_dir.rstrip("/")
     if not os.path.exists(source_path):
@@ -453,13 +595,13 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
         try:
             # Detect actual port from source before importing
             source_config = config_mgr.load_config(src_dir)
-            source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18987)
+            source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18789)
             
             config_mgr.import_from_directory(src_dir, data.group_id, name, group.root_dir)
             target_dir = os.path.join(group.root_dir, name)
             
             # Sync ports to configuration strictly following user requirements
-            # Here assigned_port is the host port and 18987 is the default container port if not found
+            # Here assigned_port is the host port and 18789 is the default container port if not found
             config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port)
             
             db_instance = Instance(
@@ -467,6 +609,7 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
                 name=name,
                 container_name=f"openclaw-{name.lower().replace(' ', '-')}-{assigned_port}",
                 host_port=assigned_port,
+                container_port=source_port,
                 status="stopped"
             )
             db.add(db_instance)
@@ -482,9 +625,8 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
 
 @app.get("/api/instances/{instance_id}")
 def get_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     
     container_info = {}
     logs = ""
@@ -503,7 +645,7 @@ def get_instance(instance_id: str, db: Session = Depends(get_db)):
         "name": inst.name,
         "container_name": inst.container_name,
         "host_port": inst.host_port,
-        "container_port": inst.container_port or 18987,
+        "container_port": inst.container_port or 18789,
         "status": container_info.get("state", "stopped"),
         "created_at": inst.created_at.isoformat() if inst.created_at else None,
         "container_info": container_info,
@@ -513,9 +655,8 @@ def get_instance(instance_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/instances/{instance_id}/start")
 def start_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     
     instance_dir = os.path.join(group.root_dir, inst.name)
     openclaw_dir = os.path.join(instance_dir, ".openclaw")
@@ -529,15 +670,26 @@ def start_instance(instance_id: str, db: Session = Depends(get_db)):
     
     environment = propagate_host_env(environment)
     
-    # Enforce essential container paths
+    # Enforce essential container paths for root user in Docker
+    # Ref: https://docs.openclaw.ai/help/environment
+    environment["HOME"] = "/root"
     environment["OPENCLAW_HOME"] = "/root"
-    environment["OPENCLAW_DATA_DIR"] = "/root/.openclaw"
+    environment["OPENCLAW_STATE_DIR"] = "/root/.openclaw"
+    environment["OPENCLAW_CONFIG_DIR"] = "/root/.openclaw"
+    environment["OPENCLAW_WORKSPACE_DIR"] = "/root/.openclaw/workspace"
+    environment["OPENCLAW_GATEWAY_BIND"] = "lan"
+    
+    # Inject global gateway password from system settings
+    settings = config_mgr.get_settings()
+    global_password = settings.get("gateway_password", "")
+    if global_password and not environment.get("OPENCLAW_GATEWAY_PASSWORD"):
+        environment["OPENCLAW_GATEWAY_PASSWORD"] = global_password
     
     effective_image = get_effective_image()
     
     docker_mgr.run_container(
         name=inst.container_name, network=group.docker_network,
-        ports={f"{inst.container_port or 18987}/tcp": inst.host_port},
+        ports={f"{inst.container_port or 18789}/tcp": inst.host_port},
         volumes={
             instance_dir: {"bind": "/root", "mode": "rw"}
         },
@@ -549,8 +701,7 @@ def start_instance(instance_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
+    inst = require_instance(db, instance_id)
     docker_mgr.stop_container(inst.container_name)
     inst.status = "stopped"
     db.commit()
@@ -558,26 +709,30 @@ def stop_instance(instance_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/instances/{instance_id}/restart")
 def restart_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
+    inst = require_instance(db, instance_id)
     docker_mgr.restart_container(inst.container_name)
+    inst.status = "running"
+    db.commit()
     return {"message": "Restarted"}
 
 @app.put("/api/instances/{instance_id}/ports")
 def update_instance_ports(instance_id: str, data: PortUpdate, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
-    
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     instance_dir = os.path.join(group.root_dir, inst.name)
     
     # Capture old values for syncing allowedOrigins
     old_host_port = inst.host_port
-    old_container_port = inst.container_port or 18987
+    old_container_port = inst.container_port or 18789
     
     # Use new unified sync logic for both host and container port updates
     new_host_port = data.host_port or old_host_port
     new_container_port = data.container_port or old_container_port
+
+    if data.host_port:
+        validate_instance_port_assignment(db, group, inst.id, data.host_port)
+    if data.container_port and data.container_port < 1:
+        raise HTTPException(status_code=400, detail="Container port must be greater than 0")
     
     if data.host_port:
         inst.host_port = data.host_port
@@ -593,14 +748,13 @@ def update_instance_ports(instance_id: str, data: PortUpdate, db: Session = Depe
     return {
         "message": "Ports updated",
         "host_port": inst.host_port,
-        "container_port": inst.container_port or 18987
+        "container_port": inst.container_port or 18789
     }
 
 @app.delete("/api/instances/{instance_id}")
 def delete_single_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     try:
         docker_mgr.stop_container(inst.container_name)
         docker_mgr.remove_container(inst.container_name)
@@ -612,23 +766,21 @@ def delete_single_instance(instance_id: str, db: Session = Depends(get_db)):
     return {"message": "Deleted"}
 
 @app.get("/api/instances/{instance_id}/logs")
-def get_instance_logs(instance_id: str, tail: int = 100):
-    db = SessionLocal()
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: return {"logs": "Instance not found"}
+def get_instance_logs(instance_id: str, tail: int = 100, db: Session = Depends(get_db)):
+    inst = require_instance(db, instance_id)
     logs = docker_mgr.get_container_logs(inst.container_name, tail=tail)
     return {"logs": logs}
 
 @app.get("/api/instances/{instance_id}/config")
 def get_instance_config(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     return config_mgr.load_config(os.path.join(group.root_dir, inst.name))
 
 @app.put("/api/instances/{instance_id}/config")
 def update_instance_config(instance_id: str, data: ConfigUpdate, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     wdir = os.path.join(group.root_dir, inst.name)
     if data.env_vars: config_mgr.update_env_file(wdir, data.env_vars)
     if data.openclaw_json: config_mgr.update_openclaw_json(wdir, data.openclaw_json)
@@ -636,27 +788,57 @@ def update_instance_config(instance_id: str, data: ConfigUpdate, db: Session = D
 
 @app.get("/api/instances/{instance_id}/terminal")
 def get_instance_terminal(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
+    inst = require_instance(db, instance_id)
     return {"terminal_url": f"http://localhost:{inst.host_port}/terminal", "gateway_url": f"http://localhost:{inst.host_port}"}
+
+@app.get("/api/instances/{instance_id}/stats")
+def get_instance_stats(instance_id: str, db: Session = Depends(get_db)):
+    inst = require_instance(db, instance_id)
+    return docker_mgr.get_container_stats(inst.container_name)
 
 # --- System Routes ---
 
 @app.get("/api/system/stats")
 def get_system_stats(db: Session = Depends(get_db)):
-    return {"total_instances": db.query(Instance).count(), "total_groups": db.query(Group).count()}
+    total_instances = db.query(Instance).count()
+    running_instances = db.query(Instance).filter(Instance.status == "running").count()
+    stopped_instances = total_instances - running_instances
+    
+    docker_info = {}
+    try:
+        docker_info = docker_mgr.get_system_info()
+    except:
+        pass
+        
+    return {
+        "total_instances": total_instances,
+        "running_instances": running_instances,
+        "stopped_instances": stopped_instances,
+        "total_groups": db.query(Group).count(),
+        "docker": docker_info
+    }
 
 @app.get("/api/system/browse-directory")
 def browse_directory():
+    """
+    Returns a directory path for selection. 
+    Note: osascript is only applicable on macOS. For Linux, 
+    we return a default path or handle via frontend directory browser.
+    """
     try:
-        prompt = "请选择实例根目录（该目录将完整映射为容器内 /root）"
-        script = f'POSIX path of (choose folder with prompt "{prompt}")'
-        result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
-        if result.returncode == 0:
-            path = result.stdout.strip()
-            if not path: return {"path": None}
-            return {"path": path}
-        return {"path": None}
-    except: return {"path": None}
+        import platform
+        if platform.system() == "Darwin":
+            prompt = "请选择实例根目录（该目录将完整映射为容器内 /root）"
+            script = f'POSIX path of (choose folder with prompt "{prompt}")'
+            result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+            if result.returncode == 0:
+                path = result.stdout.strip()
+                if path: return {"path": path}
+        
+        # Fallback for Linux or failed osascript
+        return {"path": os.getcwd()}
+    except: 
+        return {"path": os.getcwd()}
 
 @app.get("/api/system/settings")
 def get_settings():
@@ -669,26 +851,98 @@ def update_settings(settings: dict):
 
 @app.get("/api/system/networks")
 def get_networks():
-    return docker_mgr.list_networks()
+    return {"networks": docker_mgr.list_networks()}
 
 @app.get("/api/system/images")
 def get_images():
-    return docker_mgr.list_images()
+    return {"images": docker_mgr.list_images()}
 
 @app.post("/api/system/pull-image")
-def pull_image(image: str = "openclaw/openclaw:latest"):
+def pull_image(image: str = DEFAULT_OPENCLAW_IMAGE):
     effective_image = get_effective_image(image)
     docker_mgr.pull_image(effective_image)
     return {"message": "Pulled"}
 
 @app.get("/api/system/pull-image-stream")
-def pull_image_stream(image: str = "openclaw/openclaw:latest"):
+def pull_image_stream(image: str = DEFAULT_OPENCLAW_IMAGE):
     return StreamingResponse(docker_mgr.pull_image_stream(get_effective_image(image)), media_type="text/event-stream")
+
+@app.post("/api/instances/{instance_id}/clone")
+def clone_instance(instance_id: str, new_name: str, db: Session = Depends(get_db)):
+    inst = db.query(Instance).filter(Instance.id == instance_id).first()
+    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
+    
+    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    source_dir = os.path.join(group.root_dir, inst.name)
+    
+    # 1. Check if new name exists
+    if db.query(Instance).filter(Instance.name == new_name).first():
+        raise HTTPException(status_code=400, detail="New instance name already exists")
+    
+    # 2. Assign Port
+    used_ports = [i.host_port for i in db.query(Instance).filter(Instance.group_id == inst.group_id).all()]
+    assigned_port = next((p for p in range(group.port_range_start, group.port_range_end + 1) if p not in used_ports), None)
+    if not assigned_port:
+        raise HTTPException(status_code=400, detail="No ports available in this group")
+    
+    # 3. Copy files
+    target_dir = os.path.join(group.root_dir, new_name)
+    try:
+        if os.path.exists(target_dir):
+            shutil.rmtree(target_dir)
+        shutil.copytree(source_dir, target_dir)
+        
+        # 4. Sync ports in config
+        container_port = inst.container_port or 18789
+        config_mgr.sync_allowed_origins(target_dir, container_port, assigned_port)
+        
+        # 5. Create DB entry
+        new_inst = Instance(
+            group_id=inst.group_id,
+            name=new_name,
+            container_name=f"openclaw-{new_name.lower().replace(' ', '-')}-{assigned_port}",
+            host_port=assigned_port,
+            container_port=container_port,
+            status="stopped"
+        )
+        db.add(new_inst)
+        db.commit()
+        return {"id": new_inst.id, "name": new_inst.name}
+    except Exception as e:
+        if os.path.exists(target_dir):
+            shutil.rmtree(target_dir)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/system/env-check")
 def env_check():
-    import platform
-    return {"os": platform.system(), "docker": docker_mgr.client is not None}
+    settings = config_mgr.get_settings()
+    docker_socket = settings.get("docker_socket", "/var/run/docker.sock")
+    data_dir = settings.get("effective_data_dir") or config_mgr.data_dir
+    docker_info = docker_mgr.get_system_info() if docker_mgr.client is not None else {}
+
+    data_dir_writable = False
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        probe_file = os.path.join(data_dir, ".openopenclaw-write-test")
+        with open(probe_file, "w") as f:
+            f.write("ok")
+        os.remove(probe_file)
+        data_dir_writable = True
+    except OSError:
+        data_dir_writable = False
+
+    return {
+        "os": platform.system(),
+        "os_version": platform.version(),
+        "architecture": platform.machine(),
+        "python_version": sys.version.split()[0],
+        "hostname": socket.gethostname(),
+        "docker_available": docker_mgr.client is not None,
+        "docker_version": docker_info.get("docker_version", "unknown"),
+        "docker_socket_exists": os.path.exists(os.path.expanduser(docker_socket)),
+        "data_dir_writable": data_dir_writable,
+        "effective_data_dir": data_dir
+    }
 
 @app.get("/api/config/templates")
 def get_templates():
@@ -701,14 +955,12 @@ def save_templates(templates: dict):
 
 @app.get("/api/groups/{group_id}/config")
 def get_group_config(group_id: str, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group: raise HTTPException(status_code=404, detail="Group not found")
-    return config_mgr.load_config(group.root_dir)
+    group = require_group(db, group_id)
+    return config_mgr.load_group_config(group.root_dir)
 
 @app.put("/api/groups/{group_id}/config")
 def update_group_config(group_id: str, data: ConfigUpdate, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group: raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, group_id)
     if data.env_vars: config_mgr.update_group_env_file(group.root_dir, data.env_vars)
     if data.openclaw_json: config_mgr.update_group_openclaw_json(group.root_dir, data.openclaw_json)
     return {"message": "Group config updated"}
@@ -717,17 +969,15 @@ def update_group_config(group_id: str, data: ConfigUpdate, db: Session = Depends
 
 @app.post("/api/instances/{instance_id}/export")
 def export_instance(instance_id: str, db: Session = Depends(get_db)):
-    inst = db.query(Instance).filter(Instance.id == instance_id).first()
-    if not inst: raise HTTPException(status_code=404, detail="Instance not found")
-    group = db.query(Group).filter(Group.id == inst.group_id).first()
+    inst = require_instance(db, instance_id)
+    group = require_group(db, inst.group_id)
     
     zip_path = config_mgr.export_instance(inst.id, inst.name, group.root_dir)
     return {"export_path": zip_path}
 
 @app.post("/api/instances/upload")
 def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group: raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, group_id)
     
     # Check for name collision
     if db.query(Instance).filter(Instance.name == name).first():
@@ -749,7 +999,7 @@ def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: 
              
         # Detect actual port from source before syncing
         source_config = config_mgr.load_config(target_dir)
-        source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18987)
+        source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18789)
 
         # Sync ports to configuration strictly following user requirements
         config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port)
@@ -759,6 +1009,7 @@ def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: 
             name=name,
             container_name=f"openclaw-{name.lower().replace(' ', '-')}-{assigned_port}",
             host_port=assigned_port,
+            container_port=source_port,
             status="stopped"
         )
         db.add(db_instance)
@@ -770,8 +1021,7 @@ def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: 
 
 @app.post("/api/groups/{group_id}/export")
 def export_group(group_id: str, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group: raise HTTPException(status_code=404, detail="Group not found")
+    group = require_group(db, group_id)
     
     zip_path = config_mgr.export_group(group)
     return {"export_path": zip_path}
@@ -791,8 +1041,12 @@ def import_group(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
 @app.get("/api/download")
 def download_file(path: str):
-    if os.path.exists(path):
-        return FileResponse(path, filename=os.path.basename(path))
+    normalized_path = os.path.abspath(path)
+    exports_dir = os.path.abspath(os.path.join(config_mgr.data_dir, "exports"))
+    if not normalized_path.startswith(exports_dir + os.sep) and normalized_path != exports_dir:
+        raise HTTPException(status_code=403, detail="Download path not allowed")
+    if os.path.exists(normalized_path):
+        return FileResponse(normalized_path, filename=os.path.basename(normalized_path))
     raise HTTPException(status_code=404)
 
 # --- Config Update Check Routes ---
@@ -856,7 +1110,7 @@ def validate_instance_config(instance_id: str, db: Session = Depends(get_db)):
     
     # Check for missing sections
     default_config = config_mgr._get_default_openclaw_config(
-        openclaw_config.get("gateway", {}).get("port", 18987)
+        openclaw_config.get("gateway", {}).get("port", 18789)
     )
     missing_sections = [key for key in default_config if key not in openclaw_config]
     

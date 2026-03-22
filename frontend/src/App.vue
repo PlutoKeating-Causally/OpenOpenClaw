@@ -58,7 +58,10 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 
-const activeMenu = computed(() => route.path.split('/')[1] || '/dashboard')
+const activeMenu = computed(() => {
+  const firstSegment = route.path.split('/')[1]
+  return firstSegment ? `/${firstSegment}` : '/dashboard'
+})
 
 const pageTitle = computed(() => {
   const titles = {
@@ -69,7 +72,7 @@ const pageTitle = computed(() => {
     '/migration': '数据迁移',
     '/settings': '系统设置'
   }
-  return titles[route.path] || 'OpenClaw Manager'
+  return titles[route.path] || 'OpenOpenClaw'
 })
 
 const refreshData = () => {
