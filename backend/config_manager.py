@@ -798,6 +798,8 @@ class ConfigManager:
 
     def _write_env_file(self, env_path: str, env_vars: dict, container_name: str = None):
         """Write env file, with fallback to writing via Docker if file is owned by container."""
+        import time
+        
         os.makedirs(os.path.dirname(env_path), exist_ok=True)
         content = "\n".join(f"{k}={v}" for k, v in env_vars.items())
         
@@ -818,11 +820,71 @@ class ConfigManager:
         if self.docker_manager and container_name:
             # Convert host path to container path (container sees /root for its bind mount)
             container_path = env_path.replace(self.data_dir, "/root")
+            print(f"[ConfigWrite] Permission denied on host, trying Docker write: {container_name}:{container_path}")
             try:
-                if self.docker_manager.write_file_in_container(container_name, container_path, content):
+                success = self.docker_manager.write_file_in_container(container_name, container_path, content)
+                if success:
+                    print(f"[ConfigWrite] Docker write succeeded for {env_path}")
                     return
             except Exception as e:
-                print(f"Docker fallback failed: {e}")
+                print(f"[ConfigWrite] Docker write failed: {e}")
+            
+            # Docker write failed - try stop container, fix permissions, write, restart
+            print(f"[ConfigWrite] Docker write failed, attempting auto-fix by stopping container...")
+            try:
+                was_running = False
+                try:
+                    container = self.docker_manager.client.containers.get(container_name)
+                    if container.status == "running":
+                        was_running = True
+                        print(f"[ConfigWrite] Stopping container {container_name}...")
+                        container.stop(timeout=10)
+                        time.sleep(2)  # Wait for container to fully stop
+                except Exception as e:
+                    print(f"[ConfigWrite] Container stop check failed (may not exist): {e}")
+                
+                # Try to fix permissions using docker run --rm with chown
+                try:
+                    parent_dir = os.path.dirname(env_path)
+                    uid = os.getuid()
+                    gid = os.getgid()
+                    print(f"[ConfigWrite] Fixing permissions on {parent_dir} to {uid}:{gid}...")
+                    
+                    # Use a temporary container to chown the directory
+                    fix_container = self.docker_manager.client.containers.run(
+                        image="busybox:latest",
+                        command=["chown", "-R", f"{uid}:{gid}", "/target"],
+                        volumes={parent_dir: {"bind": "/target", "mode": "rw"}},
+                        auto_remove=True,
+                        detach=True
+                    )
+                    fix_container.wait()
+                    print(f"[ConfigWrite] Permissions fixed")
+                except Exception as e:
+                    print(f"[ConfigWrite] Permission fix failed: {e}")
+                
+                # Try write again
+                try:
+                    with open(env_path, "w") as f:
+                        f.write(content)
+                    print(f"[ConfigWrite] Write succeeded after permission fix")
+                    
+                    # Restart container if it was running
+                    if was_running:
+                        try:
+                            print(f"[ConfigWrite] Restarting container {container_name}...")
+                            container = self.docker_manager.client.containers.get(container_name)
+                            container.start()
+                            print(f"[ConfigWrite] Container restarted")
+                        except Exception as e:
+                            print(f"[ConfigWrite] Container restart failed: {e}")
+                    return
+                except PermissionError:
+                    print(f"[ConfigWrite] Still permission denied after fix attempt")
+            except Exception as e:
+                print(f"[ConfigWrite] Auto-fix failed: {e}")
+                import traceback
+                traceback.print_exc()
         
         # If we get here, all methods failed
         raise PermissionError(
@@ -833,6 +895,8 @@ class ConfigManager:
 
     def _write_json_file(self, file_path: str, payload: dict, container_name: str = None):
         """Write JSON file, with fallback to writing via Docker if file is owned by container."""
+        import time
+        
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         content = json.dumps(payload, indent=2)
         
@@ -853,11 +917,71 @@ class ConfigManager:
         if self.docker_manager and container_name:
             # Convert host path to container path (container sees /root for its bind mount)
             container_path = file_path.replace(self.data_dir, "/root")
+            print(f"[ConfigWrite] Permission denied on host, trying Docker write: {container_name}:{container_path}")
             try:
-                if self.docker_manager.write_file_in_container(container_name, container_path, content):
+                success = self.docker_manager.write_file_in_container(container_name, container_path, content)
+                if success:
+                    print(f"[ConfigWrite] Docker write succeeded for {file_path}")
                     return
             except Exception as e:
-                print(f"Docker fallback failed: {e}")
+                print(f"[ConfigWrite] Docker write failed: {e}")
+            
+            # Docker write failed - try stop container, fix permissions, write, restart
+            print(f"[ConfigWrite] Docker write failed, attempting auto-fix by stopping container...")
+            try:
+                was_running = False
+                try:
+                    container = self.docker_manager.client.containers.get(container_name)
+                    if container.status == "running":
+                        was_running = True
+                        print(f"[ConfigWrite] Stopping container {container_name}...")
+                        container.stop(timeout=10)
+                        time.sleep(2)  # Wait for container to fully stop
+                except Exception as e:
+                    print(f"[ConfigWrite] Container stop check failed (may not exist): {e}")
+                
+                # Try to fix permissions using docker run --rm with chown
+                try:
+                    parent_dir = os.path.dirname(file_path)
+                    uid = os.getuid()
+                    gid = os.getgid()
+                    print(f"[ConfigWrite] Fixing permissions on {parent_dir} to {uid}:{gid}...")
+                    
+                    # Use a temporary container to chown the directory
+                    fix_container = self.docker_manager.client.containers.run(
+                        image="busybox:latest",
+                        command=["chown", "-R", f"{uid}:{gid}", "/target"],
+                        volumes={parent_dir: {"bind": "/target", "mode": "rw"}},
+                        auto_remove=True,
+                        detach=True
+                    )
+                    fix_container.wait()
+                    print(f"[ConfigWrite] Permissions fixed")
+                except Exception as e:
+                    print(f"[ConfigWrite] Permission fix failed: {e}")
+                
+                # Try write again
+                try:
+                    with open(file_path, "w") as f:
+                        f.write(content)
+                    print(f"[ConfigWrite] Write succeeded after permission fix")
+                    
+                    # Restart container if it was running
+                    if was_running:
+                        try:
+                            print(f"[ConfigWrite] Restarting container {container_name}...")
+                            container = self.docker_manager.client.containers.get(container_name)
+                            container.start()
+                            print(f"[ConfigWrite] Container restarted")
+                        except Exception as e:
+                            print(f"[ConfigWrite] Container restart failed: {e}")
+                    return
+                except PermissionError:
+                    print(f"[ConfigWrite] Still permission denied after fix attempt")
+            except Exception as e:
+                print(f"[ConfigWrite] Auto-fix failed: {e}")
+                import traceback
+                traceback.print_exc()
         
         # If we get here, all methods failed
         raise PermissionError(

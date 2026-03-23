@@ -318,12 +318,33 @@ class DockerManager:
             return (1, str(e))
     
     def write_file_in_container(self, container_name: str, container_path: str, content: str) -> bool:
-        """Write content to file inside container using heredoc for multi-line content."""
-        # Use base64 to safely transfer multi-line content
+        """Write content to file inside container using base64 encoding."""
         import base64
+        import os
+        
+        # First ensure parent directory exists in container
+        parent_dir = os.path.dirname(container_path)
+        mkdir_cmd = ["mkdir", "-p", parent_dir]
+        exit_code, output = self.exec_in_container(container_name, mkdir_cmd)
+        if exit_code != 0:
+            print(f"[DockerWrite] Failed to create directory {parent_dir}: {output}")
+            return False
+        
+        # Use base64 to safely transfer multi-line content
         encoded = base64.b64encode(content.encode()).decode()
-        cmd = ["sh", "-c", f"echo '{encoded}' | base64 -d > {container_path}"]
+        # Use printf to avoid echo interpretation issues
+        cmd = ["sh", "-c", f"printf '%s' '{encoded}' | base64 -d > {container_path}"]
         exit_code, output = self.exec_in_container(container_name, cmd)
         if exit_code != 0:
-            print(f"Failed to write file in container: {output}")
-        return exit_code == 0
+            print(f"[DockerWrite] Failed to write file {container_path}: {output}")
+            return False
+        
+        # Verify file was written
+        verify_cmd = ["sh", "-c", f"test -f {container_path} && echo 'OK' || echo 'FAIL'"]
+        exit_code, output = self.exec_in_container(container_name, verify_cmd)
+        if exit_code != 0 or 'OK' not in output:
+            print(f"[DockerWrite] File verification failed for {container_path}: {output}")
+            return False
+            
+        print(f"[DockerWrite] Successfully wrote {container_path} in {container_name}")
+        return True
