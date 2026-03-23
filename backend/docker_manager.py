@@ -34,12 +34,14 @@ class DockerManager:
     def create_network(self, network_name: str):
         try:
             self.client.networks.get(network_name)
+            return False
         except NotFound:
             self.client.networks.create(
                 network_name,
                 driver="bridge",
                 attachable=True
             )
+            return True
     
     def remove_network(self, network_name: str):
         try:
@@ -74,7 +76,8 @@ class DockerManager:
         
         volume_binds = {}
         for host_path, bind_config in volumes.items():
-            volume_binds[host_path] = {
+            resolved_host_path = os.path.abspath(os.path.expanduser(host_path))
+            volume_binds[resolved_host_path] = {
                 "bind": bind_config["bind"],
                 "mode": bind_config.get("mode", "rw")
             }
@@ -295,3 +298,32 @@ class DockerManager:
             return result
         except:
             return []
+    
+    def exec_in_container(self, container_name: str, command: list, workdir: str = None) -> tuple:
+        """Execute command in container, returns (exit_code, output)."""
+        try:
+            container = self.client.containers.get(container_name)
+            if container.status != "running":
+                return (1, f"Container {container_name} is not running")
+            
+            exec_result = container.exec_run(
+                command,
+                workdir=workdir,
+                user="root"
+            )
+            return (exec_result.exit_code, exec_result.output.decode("utf-8") if exec_result.output else "")
+        except NotFound:
+            return (1, f"Container {container_name} not found")
+        except Exception as e:
+            return (1, str(e))
+    
+    def write_file_in_container(self, container_name: str, container_path: str, content: str) -> bool:
+        """Write content to file inside container using heredoc for multi-line content."""
+        # Use base64 to safely transfer multi-line content
+        import base64
+        encoded = base64.b64encode(content.encode()).decode()
+        cmd = ["sh", "-c", f"echo '{encoded}' | base64 -d > {container_path}"]
+        exit_code, output = self.exec_in_container(container_name, cmd)
+        if exit_code != 0:
+            print(f"Failed to write file in container: {output}")
+        return exit_code == 0

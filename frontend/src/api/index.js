@@ -22,7 +22,6 @@ export const groupApi = {
   getConfig: (id) => api.get(`/groups/${id}/config`),
   updateConfig: (id, data) => api.put(`/groups/${id}/config`, data),
   export: (id) => api.post(`/groups/${id}/export`),
-  import: (filePath) => api.post('/groups/import', { file_path: filePath }),
   upload: (file) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -51,7 +50,6 @@ export const instanceApi = {
   stopAll: () => api.post('/instances/stop-all'),
   clone: (id, newName) => api.post(`/instances/${id}/clone`, null, { params: { new_name: newName } }),
   export: (id) => api.post(`/instances/${id}/export`),
-  import: (sourcePath, groupId, name) => api.post('/instances/import', { source_path: sourcePath, group_id: groupId, name }),
   importDirectory: (sourceDir, groupId, name) => api.post('/instances/import-directory', { source_dir: sourceDir, group_id: groupId, name }),
   updatePorts: (id, data) => api.put(`/instances/${id}/ports`, data),
   getTerminal: (id) => api.get(`/instances/${id}/terminal`),
@@ -66,7 +64,8 @@ export const instanceApi = {
 
 export const configApi = {
   getTemplates: () => api.get('/config/templates'),
-  saveTemplates: (templates) => api.put('/config/templates', templates)
+  saveTemplates: (templates) => api.put('/config/templates', templates),
+  getDefaults: (gatewayPort = 18789) => api.get('/config/defaults', { params: { gateway_port: gatewayPort } })
 }
 
 export const systemApi = {

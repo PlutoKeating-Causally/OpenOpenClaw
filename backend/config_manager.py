@@ -3,14 +3,16 @@ import json
 import re
 import shutil
 import zipfile
+import copy
 from pathlib import Path
 from typing import Dict, Optional
 
 class ConfigManager:
-    def __init__(self):
+    def __init__(self, docker_manager=None):
         self.data_dir = os.getenv("OPENCLAW_DATA_DIR", "./data")
         self.settings_file = os.path.join(self.data_dir, "settings.json")
         self.templates_file = os.path.join(self.data_dir, "templates.json")
+        self.docker_manager = docker_manager
         self._init_default_settings()
         self._init_default_templates()
     
@@ -134,11 +136,25 @@ class ConfigManager:
         # Add effective env info for UI display
         settings["effective_data_dir"] = self.data_dir
         return settings
+
+    def _resolve_storage_path(self, path: str) -> str:
+        expanded_path = os.path.expanduser(path)
+        if os.path.isabs(expanded_path):
+            return os.path.abspath(expanded_path)
+        return os.path.abspath(os.path.join(self.data_dir, expanded_path))
+
+    def _resolve_instance_dir(self, instance_dir: str) -> str:
+        return self._resolve_storage_path(instance_dir)
+
+    def _resolve_group_root_dir(self, group_root_dir: str) -> str:
+        return self._resolve_storage_path(group_root_dir)
     
     def update_settings(self, settings: dict):
         os.makedirs(self.data_dir, exist_ok=True)
+        persisted_settings = dict(settings)
+        persisted_settings.pop("effective_data_dir", None)
         with open(self.settings_file, "w") as f:
-            json.dump(settings, f, indent=2)
+            json.dump(persisted_settings, f, indent=2)
     
     def get_preset_templates(self) -> dict:
         if os.path.exists(self.templates_file):
@@ -152,6 +168,7 @@ class ConfigManager:
             json.dump(templates, f, indent=2)
     
     def create_default_config(self, instance_dir: str, gateway_port: int = 18789):
+        instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         os.makedirs(openclaw_dir, exist_ok=True)
         
@@ -232,49 +249,22 @@ class ConfigManager:
         }
     
     def _get_default_openclaw_config(self, gateway_port: int = 18789) -> dict:
-        """Get the latest default openclaw.json configuration based on OpenClaw official schema.
-        
-        Official reference: https://docs.openclaw.ai/gateway/configuration-reference
-        
-        IMPORTANT: This configuration follows strict OpenClaw 2026.3.2 specification.
-        The gateway validates config strictly — unrecognized keys prevent boot.
-        Run `openclaw doctor` to diagnose config issues.
-        
-        Forbidden fields (will cause startup failure):
-        - agents.defaults.tools
-        - tools.file
-        - tools.webFetch
-        - tools.exec.host / tools.exec.security (wrong location/keys)
-        
-        Valid top-level sections:
-        - env, meta, wizard, auth, models, agents, tools, commands,
-          session, hooks, channels, gateway, skills, plugins
-        
-        Design decisions for OpenOpenClaw Docker deployment:
-        - All instances run as ROOT user inside Docker containers
-        - Home directory: /root, config dir: /root/.openclaw
-        - Full LLM tool capabilities enabled (file r/w, exec, web search, web fetch)
-        - Brave Search enabled by default (reads BRAVE_API_KEY from env)
-        - Gateway bound to LAN (0.0.0.0) with password auth
-        - Password read from OPENCLAW_GATEWAY_PASSWORD env var (global setting)
-        - Wizard section pre-populated so onboarding is skipped
-        """
         import datetime
         now = datetime.datetime.utcnow().isoformat() + "Z"
         
         return {
             "env": {
-                # Config-level env vars (lowest precedence, never override process/dotenv).
-                # Ref: https://docs.openclaw.ai/gateway/configuration-reference#env-inline-env-vars
-                # Group-level keys are injected here via env var substitution ${VAR_NAME}.
+                "vars": {},
+                "shellEnv": {
+                    "enabled": False,
+                    "timeoutMs": 15000
+                }
             },
             "meta": {
                 "lastTouchedVersion": "2026.3.2",
                 "lastTouchedAt": now
             },
             "wizard": {
-                # Pre-populated to skip onboarding wizard (openclaw onboard).
-                # Ref: https://docs.openclaw.ai/gateway/configuration-reference#wizard
                 "lastRunAt": now,
                 "lastRunVersion": "2026.3.2",
                 "lastRunCommand": "configure",
@@ -292,31 +282,42 @@ class ConfigManager:
                     "model": {
                         "primary": ""
                     },
+                    "imageModel": {
+                        "primary": ""
+                    },
+                    "imageGenerationModel": {
+                        "primary": ""
+                    },
+                    "pdfModel": {
+                        "primary": ""
+                    },
                     "models": {},
-                    # Root user home: /root/.openclaw/workspace
-                    "workspace": "/root/.openclaw/workspace"
-                    # NOTE: Do NOT add "tools" here — illegal in agents.defaults
+                    "workspace": "/root/.openclaw/workspace",
+                    "pdfMaxBytesMb": 10,
+                    "pdfMaxPages": 20,
+                    "thinkingDefault": "low",
+                    "verboseDefault": "off",
+                    "elevatedDefault": "on",
+                    "timeoutSeconds": 600,
+                    "mediaMaxMb": 5,
+                    "contextTokens": 200000,
+                    "maxConcurrent": 3
                 }
             },
             "tools": {
-                # "full" profile: enables ALL tool groups —
-                # group:fs (read/write/edit/apply_patch), group:runtime (exec/process/bash),
-                # group:web (web_search/web_fetch), group:sessions, group:memory,
-                # group:ui, group:automation, group:messaging, group:nodes
-                # Ref: https://docs.openclaw.ai/tools#tool-profiles
                 "profile": "full",
+                "allow": [],
+                "deny": [],
+                "byProvider": {},
+                "media": {},
                 "web": {
                     "search": {
-                        # Brave Search enabled by default.
-                        # API key read from BRAVE_API_KEY env var (set at group level).
-                        # Ref: https://docs.openclaw.ai/gateway/configuration-reference#tools-web
                         "enabled": True,
                         "maxResults": 5,
                         "timeoutSeconds": 30,
                         "cacheTtlMinutes": 15
                     },
                     "fetch": {
-                        # Web fetch for internet access.
                         "enabled": True,
                         "maxChars": 50000,
                         "maxCharsCap": 50000,
@@ -328,17 +329,19 @@ class ConfigManager:
                     "enabled": True
                 },
                 "exec": {
-                    # Full terminal command execution access.
-                    # Ref: https://docs.openclaw.ai/gateway/configuration-reference#tools-exec
                     "backgroundMs": 10000,
                     "timeoutSec": 1800,
                     "cleanupMs": 1800000,
                     "notifyOnExit": True,
-                    "notifyOnExitEmptySuccess": False
+                    "notifyOnExitEmptySuccess": False,
+                    "host": "gateway",
+                    "security": "full",
+                    "ask": "off"
+                },
+                "elevated": {
+                    "enabled": True,
+                    "allowFrom": {}
                 }
-                # NOTE: Do NOT add "file" or "webFetch" — illegal field names.
-                # File access is provided by group:fs tools (read/write/edit/apply_patch)
-                # which are included in the "full" profile.
             },
             "commands": {
                 "native": "auto",
@@ -388,14 +391,10 @@ class ConfigManager:
             "gateway": {
                 "port": gateway_port,
                 "mode": "local",
-                # "lan" is required for Docker: loopback (default) only listens on
-                # 127.0.0.1 inside the container, unreachable via Docker bridge.
-                # Ref: https://docs.openclaw.ai/install/docker#lan-vs-loopback
                 "bind": "lan",
                 "controlUi": {
                     "enabled": True,
-                    # allowedOrigins overridden by OPENCLAW_GATEWAY_CONTROL_UI_ALLOWED_ORIGINS=*
-                    # in .env for broad LAN access. Explicit list here as fallback.
+                    "basePath": "/openclaw",
                     "allowedOrigins": [
                         f"http://localhost:{gateway_port}",
                         f"http://127.0.0.1:{gateway_port}",
@@ -404,11 +403,8 @@ class ConfigManager:
                     ]
                 },
                 "auth": {
-                    # Password mode for LAN access security.
-                    # Password read from OPENCLAW_GATEWAY_PASSWORD env var.
-                    # This is a global setting managed by OpenOpenClaw system settings.
-                    # Ref: https://docs.openclaw.ai/gateway/configuration-reference#gateway
                     "mode": "password",
+                    "allowTailscale": True,
                     "rateLimit": {
                         "maxAttempts": 10,
                         "windowMs": 60000,
@@ -419,6 +415,10 @@ class ConfigManager:
                 "tailscale": {
                     "mode": "off",
                     "resetOnExit": False
+                },
+                "tools": {
+                    "deny": ["browser"],
+                    "allow": ["gateway"]
                 }
             },
             "skills": {
@@ -428,9 +428,84 @@ class ConfigManager:
                 "entries": {}
             },
             "plugins": {
-                "entries": {},
-                "installs": {}
+                "enabled": []
+            },
+            "model_knowledge": {
+                "providers": [
+                    {
+                        "id": "openai",
+                        "name": "OpenAI",
+                        "models": ["gpt-5.4", "gpt-5.4-pro", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"]
+                    },
+                    {
+                        "id": "anthropic",
+                        "name": "Anthropic",
+                        "models": ["claude-opus-4-6", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"]
+                    },
+                    {
+                        "id": "google",
+                        "name": "Google Gemini",
+                        "models": ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
+                    },
+                    {
+                        "id": "moonshot",
+                        "name": "Moonshot AI (Kimi)",
+                        "models": ["kimi-k2.5", "kimi-k2-0905-preview", "kimi-k2-turbo-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo"]
+                    },
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "models": ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"]
+                    },
+                    {
+                        "id": "volcengine",
+                        "name": "Volcano Engine (Doubao)",
+                        "models": ["doubao-seed-1-8-251228", "doubao-seed-code-preview-251028", "kimi-k2-5-260127", "glm-4-7-251222", "deepseek-v3-2-251201"]
+                    },
+                    {
+                        "id": "openrouter",
+                        "name": "OpenRouter",
+                        "models": ["anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001", "deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"]
+                    },
+                    {
+                        "id": "ollama",
+                        "name": "Ollama (Local)",
+                        "models": ["llama3.3", "qwen2.5-coder", "deepseek-v3", "phi4"]
+                    }
+                ]
             }
+        }
+
+    def _enforce_docker_execution_policy(self, config: dict) -> dict:
+        normalized = copy.deepcopy(config or {})
+
+        tools = normalized.setdefault("tools", {})
+        exec_config = tools.setdefault("exec", {})
+        exec_config["host"] = "gateway"
+        exec_config["security"] = "full"
+        exec_config["ask"] = "off"
+
+        tools.setdefault("media", {})
+
+        env = normalized.setdefault("env", {})
+        shell_env = env.setdefault("shellEnv", {})
+        shell_env["enabled"] = False
+        shell_env.setdefault("timeoutMs", 15000)
+
+        agents = normalized.setdefault("agents", {})
+        defaults = agents.setdefault("defaults", {})
+        if "sandbox" in defaults:
+            del defaults["sandbox"]
+
+        if "sandbox" in normalized:
+            del normalized["sandbox"]
+
+        return normalized
+
+    def get_default_config_bundle(self, gateway_port: int = 18789) -> dict:
+        return {
+            "env": self._get_default_env(gateway_port),
+            "openclaw": self._enforce_docker_execution_policy(self._get_default_openclaw_config(gateway_port))
         }
     
     def check_latest_config_schema(self) -> dict:
@@ -543,37 +618,16 @@ class ConfigManager:
         return config
     
     def _remove_illegal_config_fields(self, config: dict) -> dict:
-        """Remove illegal fields that cause OpenClaw startup failures.
-        
-        Illegal fields found in production:
-        - agents.defaults.tools
-        - tools.file
-        - tools.webFetch
-        - tools.exec (with host/security)
-        """
-        # Remove agents.defaults.tools
         if "agents" in config and isinstance(config["agents"], dict):
             if "defaults" in config["agents"] and isinstance(config["agents"]["defaults"], dict):
                 if "tools" in config["agents"]["defaults"]:
                     del config["agents"]["defaults"]["tools"]
         
-        # Remove illegal fields from tools
         if "tools" in config and isinstance(config["tools"], dict):
             illegal_tool_fields = ["file", "webFetch"]
             for field in illegal_tool_fields:
                 if field in config["tools"]:
                     del config["tools"][field]
-            
-            # Remove tools.exec if it has illegal host/security fields (but keep the section if valid)
-            if "exec" in config["tools"] and isinstance(config["tools"]["exec"], dict):
-                # host/security are not valid in OpenClaw 2026.3.2, remove them specifically
-                illegal_exec_subfields = ["host", "security"]
-                for subfield in illegal_exec_subfields:
-                    if subfield in config["tools"]["exec"]:
-                        del config["tools"]["exec"][subfield]
-                
-                # If exec is now empty, we can keep it or let migration add valid defaults
-                # But we definitely shouldn't delete the whole 'exec' key if it's a valid section location
         
         return config
     
@@ -600,11 +654,16 @@ class ConfigManager:
                 errors.append("tools.file: Illegal field, use tools.fileEdit or remove")
             if "webFetch" in config["tools"]:
                 errors.append("tools.webFetch: Illegal field, use tools.web.fetch instead")
-            
-            # exec is valid in tools, but its subfields might be wrong
             if "exec" in config["tools"] and isinstance(config["tools"]["exec"], dict):
-                if "host" in config["tools"]["exec"] or "security" in config["tools"]["exec"]:
-                    errors.append("tools.exec: Fields 'host' and 'security' are no longer supported. Use official fields like 'backgroundMs'.")
+                exec_host = config["tools"]["exec"].get("host")
+                if exec_host and exec_host not in ["sandbox", "gateway", "node"]:
+                    errors.append("tools.exec.host: Must be one of sandbox, gateway, node")
+                exec_security = config["tools"]["exec"].get("security")
+                if exec_security and exec_security not in ["deny", "allowlist", "full"]:
+                    errors.append("tools.exec.security: Must be one of deny, allowlist, full")
+                exec_ask = config["tools"]["exec"].get("ask")
+                if exec_ask and exec_ask not in ["off", "on-miss", "always"]:
+                    errors.append("tools.exec.ask: Must be one of off, on-miss, always")
         
         # Check required sections
         required_sections = ["meta", "gateway", "agents", "tools"]
@@ -639,6 +698,7 @@ class ConfigManager:
     
     def update_gateway_port(self, instance_dir: str, gateway_port: int, host_port: int = None, old_port: int = None):
         """Update the gateway port in both .env and openclaw.json for an instance."""
+        instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         
         # Update .env file
@@ -723,7 +783,6 @@ class ConfigManager:
         return config
 
     def _deep_merge(self, base: dict, update: dict) -> dict:
-        """Deep merge two dictionaries."""
         for key, value in update.items():
             if isinstance(value, dict) and key in base and isinstance(base[key], dict):
                 self._deep_merge(base[key], value)
@@ -731,8 +790,79 @@ class ConfigManager:
                 base[key] = value
         return base
 
+    def _write_env_file(self, env_path: str, env_vars: dict, container_name: str = None):
+        """Write env file, with fallback to writing via Docker if file is owned by container."""
+        os.makedirs(os.path.dirname(env_path), exist_ok=True)
+        content = "\n".join(f"{k}={v}" for k, v in env_vars.items())
+        
+        # Try normal write first
+        try:
+            if os.path.exists(env_path):
+                try:
+                    os.chmod(env_path, 0o644)
+                except (OSError, PermissionError):
+                    pass
+            with open(env_path, "w") as f:
+                f.write(content)
+            return
+        except PermissionError:
+            pass  # Fall through to Docker fallback
+        
+        # Try Docker fallback if available
+        if self.docker_manager and container_name:
+            # Convert host path to container path (container sees /root for its bind mount)
+            container_path = env_path.replace(self.data_dir, "/root")
+            try:
+                if self.docker_manager.write_file_in_container(container_name, container_path, content):
+                    return
+            except Exception as e:
+                print(f"Docker fallback failed: {e}")
+        
+        # If we get here, all methods failed
+        raise PermissionError(
+            f"Cannot write to {env_path}. The file is owned by a Docker container user. "
+            f"Solutions: (1) Stop the container and run: sudo chown -R $(whoami) {os.path.dirname(os.path.dirname(env_path))} "
+            f"(2) Or edit config inside the container directly"
+        )
+
+    def _write_json_file(self, file_path: str, payload: dict, container_name: str = None):
+        """Write JSON file, with fallback to writing via Docker if file is owned by container."""
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        content = json.dumps(payload, indent=2)
+        
+        # Try normal write first
+        try:
+            if os.path.exists(file_path):
+                try:
+                    os.chmod(file_path, 0o644)
+                except (OSError, PermissionError):
+                    pass
+            with open(file_path, "w") as f:
+                f.write(content)
+            return
+        except PermissionError:
+            pass  # Fall through to Docker fallback
+        
+        # Try Docker fallback if available
+        if self.docker_manager and container_name:
+            # Convert host path to container path (container sees /root for its bind mount)
+            container_path = file_path.replace(self.data_dir, "/root")
+            try:
+                if self.docker_manager.write_file_in_container(container_name, container_path, content):
+                    return
+            except Exception as e:
+                print(f"Docker fallback failed: {e}")
+        
+        # If we get here, all methods failed
+        raise PermissionError(
+            f"Cannot write to {file_path}. The file is owned by a Docker container user. "
+            f"Solutions: (1) Stop the container and run: sudo chown -R $(whoami) {os.path.dirname(file_path)} "
+            f"(2) Or edit config inside the container directly"
+        )
+
     
     def load_config(self, instance_dir: str) -> dict:
+        instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         
         env_vars = {}
@@ -756,10 +886,14 @@ class ConfigManager:
             "openclaw": openclaw_json
         }
     
-    def update_env_file(self, instance_dir: str, env_vars: dict):
+    def update_env_file(self, instance_dir: str, env_vars: dict, replace: bool = True, container_name: str = None):
+        instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         env_path = os.path.join(openclaw_dir, ".env")
-        
+        if replace:
+            self._write_env_file(env_path, env_vars, container_name=container_name)
+            return
+
         existing_vars = {}
         if os.path.exists(env_path):
             with open(env_path, "r") as f:
@@ -768,28 +902,29 @@ class ConfigManager:
                     if line and "=" in line:
                         key, value = line.split("=", 1)
                         existing_vars[key] = value
-        
+
         existing_vars.update(env_vars)
-        
-        with open(env_path, "w") as f:
-            for key, value in existing_vars.items():
-                f.write(f"{key}={value}\n")
-    
-    def update_openclaw_json(self, instance_dir: str, config: dict):
+        self._write_env_file(env_path, existing_vars, container_name=container_name)
+
+    def update_openclaw_json(self, instance_dir: str, config: dict, replace: bool = True, container_name: str = None):
+        instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
         config_path = os.path.join(openclaw_dir, "openclaw.json")
-        
+        if replace:
+            self._write_json_file(config_path, self._enforce_docker_execution_policy(config), container_name=container_name)
+            return
+
         existing_config = {}
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 existing_config = json.load(f)
-        
+
         self._deep_merge(existing_config, config)
-        
-        with open(config_path, "w") as f:
-            json.dump(existing_config, f, indent=2)
+        existing_config = self._enforce_docker_execution_policy(existing_config)
+        self._write_json_file(config_path, existing_config, container_name=container_name)
     
     def load_group_config(self, group_root_dir: str) -> dict:
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         group_env_path = os.path.join(group_root_dir, ".env")
         group_config_path = os.path.join(group_root_dir, "openclaw.json")
         
@@ -812,9 +947,13 @@ class ConfigManager:
             "openclaw": openclaw_json
         }
     
-    def update_group_env_file(self, group_root_dir: str, env_vars: dict):
+    def update_group_env_file(self, group_root_dir: str, env_vars: dict, replace: bool = True):
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         group_env_path = os.path.join(group_root_dir, ".env")
-        
+        if replace:
+            self._write_env_file(group_env_path, env_vars)
+            return
+
         existing_vars = {}
         if os.path.exists(group_env_path):
             with open(group_env_path, "r") as f:
@@ -823,27 +962,28 @@ class ConfigManager:
                     if line and "=" in line:
                         key, value = line.split("=", 1)
                         existing_vars[key] = value
-        
+
         existing_vars.update(env_vars)
-        
-        with open(group_env_path, "w") as f:
-            for key, value in existing_vars.items():
-                f.write(f"{key}={value}\n")
-    
-    def update_group_openclaw_json(self, group_root_dir: str, config: dict):
+        self._write_env_file(group_env_path, existing_vars)
+
+    def update_group_openclaw_json(self, group_root_dir: str, config: dict, replace: bool = True):
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         group_config_path = os.path.join(group_root_dir, "openclaw.json")
-        
+        if replace:
+            self._write_json_file(group_config_path, self._enforce_docker_execution_policy(config))
+            return
+
         existing_config = {}
         if os.path.exists(group_config_path):
             with open(group_config_path, "r") as f:
                 existing_config = json.load(f)
-        
+
         self._deep_merge(existing_config, config)
-        
-        with open(group_config_path, "w") as f:
-            json.dump(existing_config, f, indent=2)
+        existing_config = self._enforce_docker_execution_policy(existing_config)
+        self._write_json_file(group_config_path, existing_config)
     
     def export_instance(self, instance_id: str, instance_name: str, group_root_dir: str) -> str:
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         instance_dir = os.path.join(group_root_dir, instance_name)
         export_root = os.path.join(self.data_dir, "exports")
         os.makedirs(export_root, exist_ok=True)
@@ -863,6 +1003,7 @@ class ConfigManager:
     def import_instance(self, source_path: str, group_id: str, name: str, group_root_dir: str) -> dict:
         from datetime import datetime
         extract_dir = os.path.join(self.data_dir, "temp", f"import_{name}_{int(datetime.now().timestamp())}")
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         instance_dir = os.path.join(group_root_dir, name)
         
         # Clear destination to avoid Errno 17 (File exists) on retries/overwrites
@@ -910,6 +1051,7 @@ class ConfigManager:
     def export_group(self, group) -> str:
         export_root = os.path.join(self.data_dir, "exports")
         export_dir = os.path.join(export_root, f"group_{group.name}")
+        group_root_dir = self._resolve_group_root_dir(group.root_dir)
         
         os.makedirs(export_dir, exist_ok=True)
         
@@ -925,9 +1067,9 @@ class ConfigManager:
         with open(os.path.join(export_dir, "group_config.json"), "w") as f:
             json.dump(group_config, f, indent=2)
         
-        if os.path.exists(group.root_dir):
-            for item in os.listdir(group.root_dir):
-                item_path = os.path.join(group.root_dir, item)
+        if os.path.exists(group_root_dir):
+            for item in os.listdir(group_root_dir):
+                item_path = os.path.join(group_root_dir, item)
                 if os.path.isdir(item_path):
                     dst = os.path.join(export_dir, item)
                     shutil.copytree(item_path, dst, dirs_exist_ok=True)
@@ -973,6 +1115,7 @@ class ConfigManager:
         if not os.path.exists(source_dir):
             raise Exception(f"Source directory does not exist: {source_dir}")
         
+        group_root_dir = self._resolve_group_root_dir(group_root_dir)
         instance_dir = os.path.join(group_root_dir, name)
         
         # Clear destination to avoid Errno 17 (File exists) on retries/overwrites

@@ -300,12 +300,22 @@ const uploadGroup = async () => {
   }
   uploadingGroup.value = true
   try {
-    await groupApi.upload(selectedGroupFile.value)
-    ElMessage.success('群组上传导入成功')
+    const importedGroup = await groupApi.upload(selectedGroupFile.value)
+    const groupConfig = importedGroup.group_config || {}
+    await groupApi.create({
+      name: groupConfig.name,
+      root_dir: groupConfig.root_dir,
+      docker_network: groupConfig.docker_network,
+      port_range_start: groupConfig.port_range_start,
+      port_range_end: groupConfig.port_range_end,
+      description: groupConfig.description || ''
+    })
+    ElMessage.success(`群组导入成功: ${groupConfig.name}`)
     selectedGroupFile.value = null
     if (groupUploadRef.value) {
       groupUploadRef.value.clearFiles()
     }
+    loadGroups()
   } catch (error) {
     ElMessage.error('上传导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   } finally {
@@ -334,15 +344,6 @@ const handleBrowse = async () => {
     }
   } catch (error) {
     ElMessage.error('无法打开目录选择器: ' + error)
-  }
-}
-
-const importGroup = async () => {
-  try {
-    const result = await groupApi.import(importGroupFile.value)
-    ElMessage.success('群组导入成功: ' + result.message)
-  } catch (error) {
-    ElMessage.error('导入失败: ' + (typeof error === 'string' ? error : (error?.message || '未知错误')))
   }
 }
 

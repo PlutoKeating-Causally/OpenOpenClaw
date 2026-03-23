@@ -40,7 +40,7 @@
           <el-input v-model="form.root_dir" placeholder="groups/xxx">
             <template #prepend v-if="effectiveDataRoot">{{ effectiveDataRoot }}/</template>
           </el-input>
-          <div class="form-tip">数据物理路径：{{ effectiveDataRoot }}/{{ form.root_dir }}</div>
+          <div class="form-tip" v-if="effectiveDataRoot">数据物理路径：{{ effectiveDataRoot }}/{{ form.root_dir }}</div>
         </el-form-item>
         <el-form-item label="Docker网络" prop="docker_network">
           <el-input v-model="form.docker_network" placeholder="openclaw_network_xxx" />
@@ -159,12 +159,7 @@ watch(() => form.value.name, (newName) => {
 })
 
 const editGroup = (row) => {
-  const displayForm = { ...row }
-  // Strip effectiveDataRoot prefix for display
-  if (effectiveDataRoot.value && displayForm.root_dir.startsWith(effectiveDataRoot.value)) {
-    displayForm.root_dir = displayForm.root_dir.substring(effectiveDataRoot.value.length).replace(/^[\\/]+/, '')
-  }
-  form.value = displayForm
+  form.value = { ...row }
   dialogVisible.value = true
 }
 
@@ -176,6 +171,8 @@ const submitForm = async () => {
     if (form.value.id) {
       await groupApi.update(form.value.id, {
         name: form.value.name,
+        root_dir: form.value.root_dir,
+        docker_network: form.value.docker_network,
         description: form.value.description,
         port_range_start: form.value.port_range_start,
         port_range_end: form.value.port_range_end
@@ -183,17 +180,11 @@ const submitForm = async () => {
       ElMessage.success('群组更新成功')
     } else {
       dialogVisible.value = false
-      // Prepend effectiveDataRoot for creation
-      const submissionData = { ...form.value }
-      if (effectiveDataRoot.value && !submissionData.root_dir.startsWith('/')) {
-        const root = effectiveDataRoot.value.endsWith('/') ? effectiveDataRoot.value : effectiveDataRoot.value + '/'
-        submissionData.root_dir = root + submissionData.root_dir
-      }
       await operationLog.value.execute(`创建群组: ${form.value.name}`, async (addLog) => {
         addLog(`群组名称: ${form.value.name}`, 'info')
-        addLog(`根目录: ${submissionData.root_dir}`, 'info')
+        addLog(`根目录: ${form.value.root_dir}`, 'info')
         addLog(`Docker 网络: ${form.value.docker_network}`, 'info')
-        return await groupApi.create(submissionData)
+        return await groupApi.create(form.value)
       })
       ElMessage.success('群组创建成功')
     }

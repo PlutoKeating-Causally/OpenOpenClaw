@@ -57,7 +57,7 @@ def get_db():
         db.close()
 
 docker_mgr = DockerManager()
-config_mgr = ConfigManager()
+config_mgr = ConfigManager(docker_manager=docker_mgr)
 
 # --- Utils ---
 
@@ -103,6 +103,18 @@ def get_directory_size(path: str) -> int:
                 continue
     return total_size
 
+def resolve_storage_path(path: str) -> str:
+    expanded_path = os.path.expanduser(path)
+    if os.path.isabs(expanded_path):
+        return os.path.abspath(expanded_path)
+    return os.path.abspath(os.path.join(config_mgr.data_dir, expanded_path))
+
+def get_group_root_dir(group: Group) -> str:
+    return resolve_storage_path(group.root_dir)
+
+def get_instance_root_dir(group: Group, instance_name: str) -> str:
+    return os.path.join(get_group_root_dir(group), instance_name)
+
 def require_group(db: Session, group_id: str) -> Group:
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
@@ -126,6 +138,12 @@ def validate_instance_port_assignment(db: Session, group: Group, instance_id: Op
     if query.first():
         raise HTTPException(status_code=400, detail="Port in use")
 
+def validate_group_port_range(port_range_start: int, port_range_end: int):
+    if port_range_start < 1 or port_range_end > 65535:
+        raise HTTPException(status_code=400, detail="Group port range must be within 1-65535")
+    if port_range_start > port_range_end:
+        raise HTTPException(status_code=400, detail="Group port range start must be less than or equal to end")
+
 # --- Models ---
 
 class GroupCreate(BaseModel):
@@ -138,6 +156,8 @@ class GroupCreate(BaseModel):
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
+    root_dir: Optional[str] = None
+    docker_network: Optional[str] = None
     description: Optional[str] = None
     port_range_start: Optional[int] = None
     port_range_end: Optional[int] = None
@@ -151,6 +171,7 @@ class InstanceCreate(BaseModel):
 class ConfigUpdate(BaseModel):
     env_vars: Optional[dict] = None
     openclaw_json: Optional[dict] = None
+    replace: bool = True
 
 class PortUpdate(BaseModel):
     host_port: Optional[int] = None
@@ -242,6 +263,15 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
     existing = db.query(Group).filter(Group.name == group.name).first()
     if existing:
         raise HTTPException(status_code=400, detail="Group name already exists")
+    if not group.name.strip():
+        raise HTTPException(status_code=400, detail="Group name cannot be empty")
+    if not group.root_dir.strip():
+        raise HTTPException(status_code=400, detail="Group root directory cannot be empty")
+    if not group.docker_network.strip():
+        raise HTTPException(status_code=400, detail="Docker network cannot be empty")
+    if db.query(Group).filter(Group.root_dir == group.root_dir).first():
+        raise HTTPException(status_code=400, detail="Group root directory already exists")
+    validate_group_port_range(group.port_range_start, group.port_range_end)
     
     db_group = Group(
         name=group.name,
@@ -255,17 +285,26 @@ def create_group(group: GroupCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_group)
     
+    created_network = False
     try:
-        docker_mgr.create_network(group.docker_network)
-        os.makedirs(group.root_dir, exist_ok=True)
-    except:
-        pass
+        created_network = docker_mgr.create_network(group.docker_network)
+        os.makedirs(resolve_storage_path(group.root_dir), exist_ok=True)
+    except Exception as e:
+        db.delete(db_group)
+        db.commit()
+        if created_network:
+            try:
+                docker_mgr.remove_network(group.docker_network)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to initialize group resources: {e}")
     
     return {"id": db_group.id, "name": db_group.name}
 
 @app.get("/api/groups/{group_id}")
 def get_group(group_id: str, db: Session = Depends(get_db)):
     group = require_group(db, group_id)
+    group_root_dir = get_group_root_dir(group)
     
     instances = db.query(Instance).filter(Instance.group_id == group_id).all()
     return {
@@ -273,7 +312,7 @@ def get_group(group_id: str, db: Session = Depends(get_db)):
         "docker_network": group.docker_network, "port_range_start": group.port_range_start,
         "port_range_end": group.port_range_end, "description": group.description,
         "created_at": group.created_at.isoformat() if group.created_at else None,
-        "storage_used": get_directory_size(group.root_dir),
+        "storage_used": get_directory_size(group_root_dir),
         "instances": [{"id": i.id, "name": i.name, "status": i.status, 
                         "host_port": i.host_port, "container_port": i.container_port or 18789,
                         "created_at": i.created_at.isoformat() if i.created_at else None} 
@@ -282,19 +321,71 @@ def get_group(group_id: str, db: Session = Depends(get_db)):
 
 @app.put("/api/groups/{group_id}")
 def update_group(group_id: str, group: GroupUpdate, db: Session = Depends(get_db)):
-    db_group = db.query(Group).filter(Group.id == group_id).first()
-    if not db_group:
-        raise HTTPException(status_code=404, detail="Group not found")
-    
-    if group.name:
-        db_group.name = group.name
-    if group.description is not None:
-        db_group.description = group.description
-    if group.port_range_start is not None:
-        db_group.port_range_start = group.port_range_start
-    if group.port_range_end is not None:
-        db_group.port_range_end = group.port_range_end
-    
+    db_group = require_group(db, group_id)
+    instances = db.query(Instance).filter(Instance.group_id == group_id).all()
+
+    new_name = group.name.strip() if group.name is not None else db_group.name
+    new_root_dir = group.root_dir.strip() if group.root_dir is not None else db_group.root_dir
+    new_docker_network = group.docker_network.strip() if group.docker_network is not None else db_group.docker_network
+    new_port_range_start = group.port_range_start if group.port_range_start is not None else db_group.port_range_start
+    new_port_range_end = group.port_range_end if group.port_range_end is not None else db_group.port_range_end
+
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Group name cannot be empty")
+    if not new_root_dir:
+        raise HTTPException(status_code=400, detail="Group root directory cannot be empty")
+    if not new_docker_network:
+        raise HTTPException(status_code=400, detail="Docker network cannot be empty")
+
+    validate_group_port_range(new_port_range_start, new_port_range_end)
+
+    name_conflict = db.query(Group).filter(Group.name == new_name, Group.id != group_id).first()
+    if name_conflict:
+        raise HTTPException(status_code=400, detail="Group name already exists")
+
+    root_dir_conflict = db.query(Group).filter(Group.root_dir == new_root_dir, Group.id != group_id).first()
+    if root_dir_conflict:
+        raise HTTPException(status_code=400, detail="Group root directory already exists")
+
+    root_dir_changed = new_root_dir != db_group.root_dir
+    docker_network_changed = new_docker_network != db_group.docker_network
+    has_running_instances = any(inst.status == "running" for inst in instances)
+
+    if (root_dir_changed or docker_network_changed) and has_running_instances:
+        raise HTTPException(status_code=400, detail="Stop all group instances before changing root directory or Docker network")
+
+    for inst in instances:
+        if inst.host_port < new_port_range_start or inst.host_port > new_port_range_end:
+            raise HTTPException(status_code=400, detail=f"Instance {inst.name} uses port {inst.host_port}, which is outside the new group port range")
+
+    old_root_dir = get_group_root_dir(db_group)
+    new_root_dir_path = resolve_storage_path(new_root_dir)
+
+    if root_dir_changed:
+        if os.path.exists(new_root_dir_path) and os.path.abspath(new_root_dir_path) != os.path.abspath(old_root_dir):
+            raise HTTPException(status_code=400, detail="Target group root directory already exists on disk")
+
+        if os.path.exists(old_root_dir) and os.path.abspath(old_root_dir) != os.path.abspath(new_root_dir_path):
+            parent_dir = os.path.dirname(new_root_dir_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            shutil.move(old_root_dir, new_root_dir_path)
+        else:
+            os.makedirs(new_root_dir_path, exist_ok=True)
+
+    if docker_network_changed:
+        try:
+            docker_mgr.create_network(new_docker_network)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create Docker network: {e}")
+
+    db_group.name = new_name
+    db_group.root_dir = new_root_dir
+    db_group.docker_network = new_docker_network
+    db_group.description = group.description if group.description is not None else db_group.description
+    db_group.port_range_start = new_port_range_start
+    db_group.port_range_end = new_port_range_end
+
     db.commit()
     return {"message": "Group updated"}
 
@@ -303,6 +394,7 @@ def delete_group(group_id: str, db: Session = Depends(get_db)):
     db_group = db.query(Group).filter(Group.id == group_id).first()
     if not db_group:
         raise HTTPException(status_code=404, detail="Group not found")
+    group_root_dir = get_group_root_dir(db_group)
     
     instances = db.query(Instance).filter(Instance.group_id == group_id).all()
     for inst in instances:
@@ -311,7 +403,7 @@ def delete_group(group_id: str, db: Session = Depends(get_db)):
             docker_mgr.remove_container(inst.container_name)
         except:
             pass
-        inst_path = os.path.join(db_group.root_dir, inst.name)
+        inst_path = os.path.join(group_root_dir, inst.name)
         if os.path.exists(inst_path):
             shutil.rmtree(inst_path)
     
@@ -390,7 +482,7 @@ def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_instance)
     
-    instance_dir = os.path.join(group.root_dir, instance.name)
+    instance_dir = get_instance_root_dir(group, instance.name)
     os.makedirs(os.path.join(instance_dir, ".openclaw"), exist_ok=True)
     os.makedirs(os.path.join(instance_dir, "data"), exist_ok=True)
     config_mgr.create_default_config(instance_dir, gateway_port=container_port)
@@ -411,11 +503,12 @@ def batch_start_instances(instance_ids: List[str], db: Session = Depends(get_db)
             group = db.query(Group).filter(Group.id == inst.group_id).first()
             try:
                 # Environment Merging: Host -> Group -> Instance
-                instance_dir = os.path.join(group.root_dir, inst.name)
+                group_root_dir = get_group_root_dir(group)
+                instance_dir = os.path.join(group_root_dir, inst.name)
                 openclaw_dir = os.path.join(instance_dir, ".openclaw")
                 
                 # 1. Load Group Env
-                group_env_path = os.path.join(group.root_dir, ".env")
+                group_env_path = os.path.join(group_root_dir, ".env")
                 environment = docker_mgr.load_env_file(group_env_path)
                 
                 # 2. Merge Instance Env (Instance wins)
@@ -484,7 +577,7 @@ def batch_delete_instances(instance_ids: List[str], db: Session = Depends(get_db
                 docker_mgr.remove_container(inst.container_name)
             except: pass
             
-            instance_dir = os.path.join(group.root_dir, inst.name)
+            instance_dir = get_instance_root_dir(group, inst.name)
             if os.path.exists(instance_dir):
                 shutil.rmtree(instance_dir)
             
@@ -504,10 +597,11 @@ def start_all_instances(db: Session = Depends(get_db)):
             if not group:
                 continue
             try:
-                instance_dir = os.path.join(group.root_dir, inst.name)
+                group_root_dir = get_group_root_dir(group)
+                instance_dir = os.path.join(group_root_dir, inst.name)
                 openclaw_dir = os.path.join(instance_dir, ".openclaw")
                 
-                group_env_path = os.path.join(group.root_dir, ".env")
+                group_env_path = os.path.join(group_root_dir, ".env")
                 environment = docker_mgr.load_env_file(group_env_path)
                 
                 inst_env_path = os.path.join(openclaw_dir, ".env")
@@ -549,6 +643,7 @@ def start_all_instances(db: Session = Depends(get_db)):
 @app.post("/api/instances/import-directory")
 def import_instances_from_directory(data: DirectoryImport, db: Session = Depends(get_db)):
     group = require_group(db, data.group_id)
+    group_root_dir = get_group_root_dir(group)
     
     source_path = data.source_dir.rstrip("/")
     if not os.path.exists(source_path):
@@ -597,8 +692,8 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
             source_config = config_mgr.load_config(src_dir)
             source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18789)
             
-            config_mgr.import_from_directory(src_dir, data.group_id, name, group.root_dir)
-            target_dir = os.path.join(group.root_dir, name)
+            config_mgr.import_from_directory(src_dir, data.group_id, name, group_root_dir)
+            target_dir = os.path.join(group_root_dir, name)
             
             # Sync ports to configuration strictly following user requirements
             # Here assigned_port is the host port and 18789 is the default container port if not found
@@ -627,6 +722,7 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
 def get_instance(instance_id: str, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
+    instance_dir = get_instance_root_dir(group, inst.name)
     
     container_info = {}
     logs = ""
@@ -636,7 +732,7 @@ def get_instance(instance_id: str, db: Session = Depends(get_db)):
     except:
         pass
     
-    config = config_mgr.load_config(os.path.join(group.root_dir, inst.name))
+    config = config_mgr.load_config(instance_dir)
     
     return {
         "id": inst.id, 
@@ -658,11 +754,12 @@ def start_instance(instance_id: str, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
     
-    instance_dir = os.path.join(group.root_dir, inst.name)
+    group_root_dir = get_group_root_dir(group)
+    instance_dir = os.path.join(group_root_dir, inst.name)
     openclaw_dir = os.path.join(instance_dir, ".openclaw")
     
     # Environment Merging: Group -> Instance -> Host
-    group_env_file = os.path.join(group.root_dir, ".env")
+    group_env_file = os.path.join(group_root_dir, ".env")
     environment = docker_mgr.load_env_file(group_env_file)
     
     inst_env_file = os.path.join(openclaw_dir, ".env")
@@ -719,7 +816,7 @@ def restart_instance(instance_id: str, db: Session = Depends(get_db)):
 def update_instance_ports(instance_id: str, data: PortUpdate, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
-    instance_dir = os.path.join(group.root_dir, inst.name)
+    instance_dir = get_instance_root_dir(group, inst.name)
     
     # Capture old values for syncing allowedOrigins
     old_host_port = inst.host_port
@@ -759,8 +856,9 @@ def delete_single_instance(instance_id: str, db: Session = Depends(get_db)):
         docker_mgr.stop_container(inst.container_name)
         docker_mgr.remove_container(inst.container_name)
     except: pass
-    if os.path.exists(os.path.join(group.root_dir, inst.name)):
-        shutil.rmtree(os.path.join(group.root_dir, inst.name))
+    instance_dir = get_instance_root_dir(group, inst.name)
+    if os.path.exists(instance_dir):
+        shutil.rmtree(instance_dir)
     db.delete(inst)
     db.commit()
     return {"message": "Deleted"}
@@ -775,15 +873,17 @@ def get_instance_logs(instance_id: str, tail: int = 100, db: Session = Depends(g
 def get_instance_config(instance_id: str, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
-    return config_mgr.load_config(os.path.join(group.root_dir, inst.name))
+    return config_mgr.load_config(get_instance_root_dir(group, inst.name))
 
 @app.put("/api/instances/{instance_id}/config")
 def update_instance_config(instance_id: str, data: ConfigUpdate, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
-    wdir = os.path.join(group.root_dir, inst.name)
-    if data.env_vars: config_mgr.update_env_file(wdir, data.env_vars)
-    if data.openclaw_json: config_mgr.update_openclaw_json(wdir, data.openclaw_json)
+    wdir = get_instance_root_dir(group, inst.name)
+    if data.env_vars is not None:
+        config_mgr.update_env_file(wdir, data.env_vars, replace=data.replace, container_name=inst.container_name)
+    if data.openclaw_json is not None:
+        config_mgr.update_openclaw_json(wdir, data.openclaw_json, replace=data.replace, container_name=inst.container_name)
     return {"message": "Saved"}
 
 @app.get("/api/instances/{instance_id}/terminal")
@@ -873,7 +973,8 @@ def clone_instance(instance_id: str, new_name: str, db: Session = Depends(get_db
     if not inst: raise HTTPException(status_code=404, detail="Instance not found")
     
     group = db.query(Group).filter(Group.id == inst.group_id).first()
-    source_dir = os.path.join(group.root_dir, inst.name)
+    group_root_dir = get_group_root_dir(group)
+    source_dir = os.path.join(group_root_dir, inst.name)
     
     # 1. Check if new name exists
     if db.query(Instance).filter(Instance.name == new_name).first():
@@ -886,7 +987,7 @@ def clone_instance(instance_id: str, new_name: str, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="No ports available in this group")
     
     # 3. Copy files
-    target_dir = os.path.join(group.root_dir, new_name)
+    target_dir = os.path.join(group_root_dir, new_name)
     try:
         if os.path.exists(target_dir):
             shutil.rmtree(target_dir)
@@ -953,16 +1054,23 @@ def save_templates(templates: dict):
     config_mgr.save_templates(templates)
     return {"message": "Templates saved"}
 
+@app.get("/api/config/defaults")
+def get_default_config_bundle(gateway_port: int = 18789):
+    return config_mgr.get_default_config_bundle(gateway_port)
+
 @app.get("/api/groups/{group_id}/config")
 def get_group_config(group_id: str, db: Session = Depends(get_db)):
     group = require_group(db, group_id)
-    return config_mgr.load_group_config(group.root_dir)
+    return config_mgr.load_group_config(get_group_root_dir(group))
 
 @app.put("/api/groups/{group_id}/config")
 def update_group_config(group_id: str, data: ConfigUpdate, db: Session = Depends(get_db)):
     group = require_group(db, group_id)
-    if data.env_vars: config_mgr.update_group_env_file(group.root_dir, data.env_vars)
-    if data.openclaw_json: config_mgr.update_group_openclaw_json(group.root_dir, data.openclaw_json)
+    group_root_dir = get_group_root_dir(group)
+    if data.env_vars is not None:
+        config_mgr.update_group_env_file(group_root_dir, data.env_vars, replace=data.replace)
+    if data.openclaw_json is not None:
+        config_mgr.update_group_openclaw_json(group_root_dir, data.openclaw_json, replace=data.replace)
     return {"message": "Group config updated"}
 
 # --- Export/Import Routes ---
@@ -972,12 +1080,13 @@ def export_instance(instance_id: str, db: Session = Depends(get_db)):
     inst = require_instance(db, instance_id)
     group = require_group(db, inst.group_id)
     
-    zip_path = config_mgr.export_instance(inst.id, inst.name, group.root_dir)
+    zip_path = config_mgr.export_instance(inst.id, inst.name, get_group_root_dir(group))
     return {"export_path": zip_path}
 
 @app.post("/api/instances/upload")
 def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     group = require_group(db, group_id)
+    group_root_dir = get_group_root_dir(group)
     
     # Check for name collision
     if db.query(Instance).filter(Instance.name == name).first():
@@ -988,8 +1097,8 @@ def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: 
         f.write(file.file.read())
     
     try:
-        config_mgr.import_instance(temp_path, group_id, name, group.root_dir)
-        target_dir = os.path.join(group.root_dir, name)
+        config_mgr.import_instance(temp_path, group_id, name, group_root_dir)
+        target_dir = os.path.join(group_root_dir, name)
         
         # Port Assignment
         used_ports = [i.host_port for i in db.query(Instance).filter(Instance.group_id == group_id).all()]
@@ -1064,7 +1173,7 @@ def migrate_instance_config(instance_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Instance not found")
     
     group = db.query(Group).filter(Group.id == inst.group_id).first()
-    instance_dir = os.path.join(group.root_dir, inst.name)
+    instance_dir = get_instance_root_dir(group, inst.name)
     
     # Load current config
     current_config = config_mgr.load_config(instance_dir)
@@ -1099,7 +1208,7 @@ def validate_instance_config(instance_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Instance not found")
     
     group = db.query(Group).filter(Group.id == inst.group_id).first()
-    instance_dir = os.path.join(group.root_dir, inst.name)
+    instance_dir = get_instance_root_dir(group, inst.name)
     
     # Load current config
     current_config = config_mgr.load_config(instance_dir)
@@ -1146,7 +1255,7 @@ def fix_instance_config(instance_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Instance not found")
     
     group = db.query(Group).filter(Group.id == inst.group_id).first()
-    instance_dir = os.path.join(group.root_dir, inst.name)
+    instance_dir = get_instance_root_dir(group, inst.name)
     
     # Load current config
     current_config = config_mgr.load_config(instance_dir)

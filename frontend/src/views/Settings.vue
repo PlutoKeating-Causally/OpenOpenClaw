@@ -34,7 +34,7 @@
             </el-form-item>
             
             <el-form-item label="默认 Docker 镜像">
-              <el-input v-model="settings.default_image" placeholder="openclaw/openclaw:latest" />
+              <el-input v-model="settings.default_image" placeholder="ghcr.io/openclaw/openclaw:latest" />
               <div class="form-tip">创建新实例时使用的 Docker 镜像</div>
             </el-form-item>
           </el-form>
@@ -52,7 +52,7 @@
           </template>
           <el-form label-width="150px">
             <el-form-item label="镜像地址">
-              <el-input v-model="pullImageName" placeholder="openclaw/openclaw:latest" />
+              <el-input v-model="pullImageName" placeholder="ghcr.io/openclaw/openclaw:latest" />
             </el-form-item>
           </el-form>
           <el-alert v-if="pullResult" :type="pullSuccess ? 'success' : 'error'" :closable="false" style="margin-top: 10px;">
@@ -208,8 +208,8 @@
             <span>环境信息</span>
           </template>
           <el-descriptions :column="2" border>
-            <el-descriptions-item label="操作系统">{{ osInfo.os }}</el-descriptions-item>
-            <el-descriptions-item label="主机名">{{ osInfo.hostname }}</el-descriptions-item>
+            <el-descriptions-item label="操作系统">{{ envCheck?.os || 'Unknown' }}</el-descriptions-item>
+            <el-descriptions-item label="主机名">{{ envCheck?.hostname || 'Unknown' }}</el-descriptions-item>
             <el-descriptions-item label="后端版本">1.0.0</el-descriptions-item>
             <el-descriptions-item label="前端版本">1.0.0</el-descriptions-item>
           </el-descriptions>
@@ -248,10 +248,6 @@ const settings = ref({
 })
 
 const dockerInfo = ref(null)
-const osInfo = ref({
-  os: 'Unknown',
-  hostname: 'Unknown'
-})
 
 const envCheck = ref(null)
 const checking = ref(false)
@@ -355,7 +351,9 @@ const saveDockerRegistry = async () => {
   savingRegistry.value = true
   try {
     const registrySettings = {
-      docker_registry: dockerRegistry.value.registry || dockerRegistry.value.customRegistry || '',
+      docker_registry: dockerRegistry.value.registry === 'custom'
+        ? (dockerRegistry.value.customRegistry || '')
+        : (dockerRegistry.value.registry || ''),
       docker_mirror: dockerRegistry.value.mirrorUrl || ''
     }
     const currentSettings = await systemApi.getSettings()
@@ -425,25 +423,9 @@ const formatDate = (timestamp) => {
   return date.toLocaleString('zh-CN')
 }
 
-const detectOs = () => {
-  const platform = navigator.platform.toLowerCase()
-  if (platform.includes('mac')) {
-    osInfo.value.os = 'macOS'
-  } else if (platform.includes('win')) {
-    osInfo.value.os = 'Windows'
-  } else if (platform.includes('linux')) {
-    osInfo.value.os = 'Linux'
-  } else {
-    osInfo.value.os = platform
-  }
-  
-  osInfo.value.hostname = window.location.hostname || 'localhost'
-}
-
 onMounted(() => {
   loadSettings()
   loadDockerInfo()
-  detectOs()
   checkEnvironment()
   loadNetworks()
   loadImages()
