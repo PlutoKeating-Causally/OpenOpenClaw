@@ -696,7 +696,7 @@ class ConfigManager:
             "warnings": warnings
         }
     
-    def update_gateway_port(self, instance_dir: str, gateway_port: int, host_port: int = None, old_port: int = None):
+    def update_gateway_port(self, instance_dir: str, gateway_port: int, host_port: int = None, old_port: int = None, container_name: str = None):
         """Update the gateway port in both .env and openclaw.json for an instance."""
         instance_dir = self._resolve_instance_dir(instance_dir)
         openclaw_dir = os.path.join(instance_dir, ".openclaw")
@@ -715,8 +715,15 @@ class ConfigManager:
                         lines.append(line)
             if not found:
                 lines.append(f"OPENCLAW_GATEWAY_PORT={gateway_port}\n")
-            with open(env_path, "w") as f:
-                f.writelines(lines)
+            env_content = "".join(lines)
+            # Parse into dict for _write_env_file
+            env_vars = {}
+            for line in lines:
+                line = line.strip()
+                if line and "=" in line and not line.startswith("#"):
+                    key, value = line.split("=", 1)
+                    env_vars[key] = value
+            self._write_env_file(env_path, env_vars, container_name=container_name)
         
         # Update openclaw.json strictly following user requirements
         config_path = os.path.join(openclaw_dir, "openclaw.json")
@@ -749,12 +756,11 @@ class ConfigManager:
                     f"http://127.0.0.1:{host_port}"
                 ]
             
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
+            self._write_json_file(config_path, config, container_name=container_name)
 
-    def sync_allowed_origins(self, instance_dir: str, container_port: int, host_port: int):
+    def sync_allowed_origins(self, instance_dir: str, container_port: int, host_port: int, container_name: str = None):
         """Synchronize allowedOrigins within openclaw.json strictly following user requirements."""
-        self.update_gateway_port(instance_dir, container_port, host_port=host_port)
+        self.update_gateway_port(instance_dir, container_port, host_port=host_port, container_name=container_name)
 
     def _sync_origins_in_dict(self, config: dict, old_port: int, new_port: int) -> dict:
         if "gateway" not in config:
@@ -947,11 +953,11 @@ class ConfigManager:
             "openclaw": openclaw_json
         }
     
-    def update_group_env_file(self, group_root_dir: str, env_vars: dict, replace: bool = True):
+    def update_group_env_file(self, group_root_dir: str, env_vars: dict, replace: bool = True, container_name: str = None):
         group_root_dir = self._resolve_group_root_dir(group_root_dir)
         group_env_path = os.path.join(group_root_dir, ".env")
         if replace:
-            self._write_env_file(group_env_path, env_vars)
+            self._write_env_file(group_env_path, env_vars, container_name=container_name)
             return
 
         existing_vars = {}
@@ -964,13 +970,13 @@ class ConfigManager:
                         existing_vars[key] = value
 
         existing_vars.update(env_vars)
-        self._write_env_file(group_env_path, existing_vars)
+        self._write_env_file(group_env_path, existing_vars, container_name=container_name)
 
-    def update_group_openclaw_json(self, group_root_dir: str, config: dict, replace: bool = True):
+    def update_group_openclaw_json(self, group_root_dir: str, config: dict, replace: bool = True, container_name: str = None):
         group_root_dir = self._resolve_group_root_dir(group_root_dir)
         group_config_path = os.path.join(group_root_dir, "openclaw.json")
         if replace:
-            self._write_json_file(group_config_path, self._enforce_docker_execution_policy(config))
+            self._write_json_file(group_config_path, self._enforce_docker_execution_policy(config), container_name=container_name)
             return
 
         existing_config = {}
@@ -980,7 +986,7 @@ class ConfigManager:
 
         self._deep_merge(existing_config, config)
         existing_config = self._enforce_docker_execution_policy(existing_config)
-        self._write_json_file(group_config_path, existing_config)
+        self._write_json_file(group_config_path, existing_config, container_name=container_name)
     
     def export_instance(self, instance_id: str, instance_name: str, group_root_dir: str) -> str:
         group_root_dir = self._resolve_group_root_dir(group_root_dir)

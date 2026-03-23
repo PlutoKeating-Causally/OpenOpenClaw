@@ -487,7 +487,7 @@ def create_instance(instance: InstanceCreate, db: Session = Depends(get_db)):
     os.makedirs(os.path.join(instance_dir, "data"), exist_ok=True)
     config_mgr.create_default_config(instance_dir, gateway_port=container_port)
     # Ensure initial allowedOrigins follow strict requirements
-    config_mgr.sync_allowed_origins(instance_dir, container_port, assigned_port)
+    config_mgr.sync_allowed_origins(instance_dir, container_port, assigned_port, container_name=None)
     
     return {"id": db_instance.id, "name": db_instance.name}
 
@@ -697,7 +697,7 @@ def import_instances_from_directory(data: DirectoryImport, db: Session = Depends
             
             # Sync ports to configuration strictly following user requirements
             # Here assigned_port is the host port and 18789 is the default container port if not found
-            config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port)
+            config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port, container_name=None)
             
             db_instance = Instance(
                 group_id=data.group_id,
@@ -837,7 +837,7 @@ def update_instance_ports(instance_id: str, data: PortUpdate, db: Session = Depe
         inst.container_port = data.container_port
         
     # Always sync allowedOrigins strictly when either port changes
-    config_mgr.sync_allowed_origins(instance_dir, new_container_port, new_host_port)
+    config_mgr.sync_allowed_origins(instance_dir, new_container_port, new_host_port, container_name=inst.container_name)
         
     db.commit()
     db.refresh(inst)
@@ -995,7 +995,7 @@ def clone_instance(instance_id: str, new_name: str, db: Session = Depends(get_db
         
         # 4. Sync ports in config
         container_port = inst.container_port or 18789
-        config_mgr.sync_allowed_origins(target_dir, container_port, assigned_port)
+        config_mgr.sync_allowed_origins(target_dir, container_port, assigned_port, container_name=None)
         
         # 5. Create DB entry
         new_inst = Instance(
@@ -1111,7 +1111,7 @@ def upload_instance(group_id: str, name: str, file: UploadFile = File(...), db: 
         source_port = source_config.get("openclaw", {}).get("gateway", {}).get("port", 18789)
 
         # Sync ports to configuration strictly following user requirements
-        config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port)
+        config_mgr.sync_allowed_origins(target_dir, source_port, assigned_port, container_name=None)
              
         db_instance = Instance(
             group_id=group_id,
@@ -1186,7 +1186,7 @@ def migrate_instance_config(instance_id: str, db: Session = Depends(get_db)):
     )
     
     # Save migrated config
-    config_mgr.update_openclaw_json(instance_dir, migrated)
+    config_mgr.update_openclaw_json(instance_dir, migrated, container_name=inst.container_name)
     
     return {
         "message": "Configuration migrated successfully",
@@ -1268,7 +1268,7 @@ def fix_instance_config(instance_id: str, db: Session = Depends(get_db)):
     fixed_config = config_mgr.migrate_config_to_latest(openclaw_config)
     
     # Save fixed config
-    config_mgr.update_openclaw_json(instance_dir, fixed_config)
+    config_mgr.update_openclaw_json(instance_dir, fixed_config, container_name=inst.container_name)
     
     # Validate after fix
     after_validation = config_mgr.validate_config(fixed_config)
